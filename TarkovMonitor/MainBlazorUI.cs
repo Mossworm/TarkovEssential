@@ -10,6 +10,7 @@ using MudBlazor;
 using Microsoft.Extensions.Localization;
 using System.Text.Json.Nodes;
 using System.Runtime.InteropServices;
+using Microsoft.Web.WebView2.WinForms;
 
 namespace TarkovMonitor
 {
@@ -20,10 +21,15 @@ namespace TarkovMonitor
         private readonly LogRepository logRepository;
         private readonly GroupManager groupManager;
         private readonly TimersManager timersManager;
+        private readonly NativeWebViewService nativeWebViewService;
         private readonly System.Timers.Timer runthroughTimer;
         private readonly System.Timers.Timer scavCooldownTimer;
         private LocalizationService localizationService;
+        private WebView2? mapsWebView;
         private bool inRaid;
+        private bool mapsDrawerOpen = true;
+        private const int AppBarHeight = 48;
+        private const int DrawerWidth = 240;
         private const int DwmwaCaptionColor = 35;
         private const int DwmwaTextColor = 36;
         private const int TitleBarColor = 0x002D2F2F; // #2f2f2d as COLORREF (0x00bbggrr)
@@ -35,6 +41,7 @@ namespace TarkovMonitor
         public MainBlazorUI()
         {
             InitializeComponent();
+            InitializeMapsWebView();
             if (Properties.Settings.Default.upgradeRequired)
             {
                 Properties.Settings.Default.Upgrade();
@@ -66,7 +73,9 @@ namespace TarkovMonitor
             services.AddWindowsFormsBlazorWebView();
             services.AddMudServices();
             services.AddLocalization();
+             nativeWebViewService = new NativeWebViewService();
             services.AddSingleton<LocalizationService>();
+            services.AddSingleton(nativeWebViewService);
             services.AddSingleton<GameWatcher>(eft);
             services.AddSingleton<MessageLog>(messageLog);
             services.AddSingleton<LogRepository>(logRepository);
@@ -78,6 +87,8 @@ namespace TarkovMonitor
             blazorWebView1.Services = serviceProvider;
             localizationService = serviceProvider.GetRequiredService<LocalizationService>();
             blazorWebView1.RootComponents.Add<TarkovMonitor.Blazor.App>("#app");
+            nativeWebViewService.MapsVisibilityChanged += SetMapsWebViewVisible;
+            nativeWebViewService.DrawerOpenChanged += SetMapsDrawerOpen;
             //services.AddSingleton<TarkovDevRepository>(tarkovdevRepository);
             // Add event watchers
             eft.FleaSold += Eft_FleaSold;
@@ -175,10 +186,82 @@ namespace TarkovMonitor
             scavCooldownTimer.Elapsed += ScavCooldownTimer_Elapsed;
         }
 
+        private void InitializeMapsWebView()
+        {
+            mapsWebView = new WebView2
+            {
+                Name = "mapsWebView",
+                // Source = new Uri("https://www.google.com/"),
+                Source = new Uri("https://tarkov.dev/map/factory"),
+                Visible = false
+            };
+            Controls.Add(mapsWebView);
+            UpdateMapsWebViewBounds();
+        }
+
+        private void SetMapsWebViewVisible(bool visible)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(() => SetMapsWebViewVisible(visible));
+                return;
+            }
+
+            if (mapsWebView == null)
+            {
+                return;
+            }
+
+            mapsWebView.Visible = visible;
+            if (visible)
+            {
+                UpdateMapsWebViewBounds();
+                mapsWebView.BringToFront();
+            }
+            else
+            {
+                blazorWebView1.BringToFront();
+            }
+        }
+
+        private void SetMapsDrawerOpen(bool open)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(() => SetMapsDrawerOpen(open));
+                return;
+            }
+
+            mapsDrawerOpen = open;
+            UpdateMapsWebViewBounds();
+        }
+
+        private void UpdateMapsWebViewBounds()
+        {
+            if (mapsWebView == null)
+            {
+                return;
+            }
+
+            var leftOffset = mapsDrawerOpen ? DrawerWidth : 0;
+
+            mapsWebView.Bounds = new Rectangle(
+                leftOffset,
+                AppBarHeight,
+                Math.Max(0, ClientSize.Width - leftOffset),
+                Math.Max(0, ClientSize.Height - AppBarHeight));
+        }
+
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
             ApplyTitleBarColors();
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            UpdateMapsWebViewBounds();
         }
 
         private void ApplyTitleBarColors()
