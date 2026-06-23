@@ -157,7 +157,7 @@
     <value>Window Behavior</value>
   </data>
   <data name="StartTarkovMonitorMinimized" xml:space="preserve">
-    <value>Start Tarkov Monitor Minimized</value>
+    <value>Start Tarkov Essential Minimized</value>
   </data>
   <data name="MinimizeToSystemTray" xml:space="preserve">
     <value>Minimize to System Tray</value>
@@ -280,7 +280,10 @@
     <value>中文</value>
   </data>
   <data name="TarkovMonitor" xml:space="preserve">
-    <value>Tarkov Monitor</value>
+    <value>Tarkov Essential</value>
+  </data>
+  <data name="Maps" xml:space="preserve">
+    <value>Maps</value>
   </data>
   <data name="Messages" xml:space="preserve">
     <value>Messages</value>

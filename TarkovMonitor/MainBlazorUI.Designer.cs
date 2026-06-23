@@ -49,10 +49,10 @@
             // 
             // notifyIconTarkovMonitor
             // 
-            notifyIconTarkovMonitor.BalloonTipTitle = "Tarkov Essential";
+            notifyIconTarkovMonitor.BalloonTipTitle = "TarkovEssential";
             notifyIconTarkovMonitor.ContextMenuStrip = contextMenuStripTarkovMonitor;
             notifyIconTarkovMonitor.Icon = (Icon)resources.GetObject("notifyIconTarkovMonitor.Icon");
-            notifyIconTarkovMonitor.Text = "Tarkov Essential";
+            notifyIconTarkovMonitor.Text = "TarkovEssential";
             notifyIconTarkovMonitor.MouseDoubleClick += notifyIconTarkovMonitor_MouseDoubleClick;
             // 
             // contextMenuStripTarkovMonitor
@@ -66,7 +66,7 @@
             // 
             menuItemQuit.Name = "menuItemQuit";
             menuItemQuit.Size = new Size(210, 24);
-            menuItemQuit.Text = "Quit Tarkov Monitor";
+            menuItemQuit.Text = "Quit Tarkov Essential";
             menuItemQuit.Click += menuItemQuit_Click;
             // 
             // MainBlazorUI
@@ -78,7 +78,7 @@
             Icon = (Icon)resources.GetObject("$this.Icon");
             Margin = new Padding(3, 4, 3, 4);
             Name = "MainBlazorUI";
-            Text = "Tarkov Essential";
+            Text = "TarkovEssential";
             Resize += MainBlazorUI_Resize;
             contextMenuStripTarkovMonitor.ResumeLayout(false);
             ResumeLayout(false);

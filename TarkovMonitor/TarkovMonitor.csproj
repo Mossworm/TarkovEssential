@@ -7,7 +7,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationIcon>Resources\TarkovDev.ico</ApplicationIcon>
-    <AssemblyName>Tarkov Essential</AssemblyName>
+    <AssemblyName>TarkovEssential</AssemblyName>
     <AssemblyVersion>1.11.0.0</AssemblyVersion>
   </PropertyGroup>
 
