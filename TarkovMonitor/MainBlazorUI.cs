@@ -9,6 +9,7 @@ using System.ComponentModel;
 using MudBlazor;
 using Microsoft.Extensions.Localization;
 using System.Text.Json.Nodes;
+using System.Runtime.InteropServices;
 
 namespace TarkovMonitor
 {
@@ -23,6 +24,13 @@ namespace TarkovMonitor
         private readonly System.Timers.Timer scavCooldownTimer;
         private LocalizationService localizationService;
         private bool inRaid;
+        private const int DwmwaCaptionColor = 35;
+        private const int DwmwaTextColor = 36;
+        private const int TitleBarColor = 0x002D2F2F; // #2f2f2d as COLORREF (0x00bbggrr)
+        private const int TitleBarTextColor = 0x00FFFFFF;
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
 
         public MainBlazorUI()
         {
@@ -165,6 +173,28 @@ namespace TarkovMonitor
                 Enabled = false
             };
             scavCooldownTimer.Elapsed += ScavCooldownTimer_Elapsed;
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            ApplyTitleBarColors();
+        }
+
+        private void ApplyTitleBarColors()
+        {
+            try
+            {
+                var captionColor = TitleBarColor;
+                var textColor = TitleBarTextColor;
+
+                DwmSetWindowAttribute(Handle, DwmwaCaptionColor, ref captionColor, sizeof(int));
+                DwmSetWindowAttribute(Handle, DwmwaTextColor, ref textColor, sizeof(int));
+            }
+            catch
+            {
+                // Older Windows builds do not support custom caption colors.
+            }
         }
 
         private void Eft_ControlSettings(object? sender, ControlSettingsEventArgs e)
