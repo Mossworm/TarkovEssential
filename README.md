@@ -11,7 +11,7 @@ Tarkov Essential은 Escape from Tarkov 플레이를 도와주는 애플리케이
 
 > [!WARNING]
 > 본 프로그램은 [GPL-3.0 라이선스](./LICENSE)로 배포되며, **본 프로그램 사용으로 인한 어떠한 피해(BSG에 의한 제재 등)에 대해서도 책임지지 않습니다.**
-> 본 프로그램은 [tarkov.dev](https://tarkov.dev/)과 공식적인 관계가 없으며, [tarkov monitor](https://github.com/the-hideout/TarkovMonitor)를 수정하여 제작되었습니다.
+> 본 프로그램은 [tarkov.dev](https://tarkov.dev/)과 공식적인 관계가 없으며, [TarkovMonitor](https://github.com/the-hideout/TarkovMonitor)를 수정하여 제작되었습니다.
 
 ## 설치 방법
 1. 이 프로젝트의 [최신 릴리스](https://github.com/Mossworm/TarkovEssential/releases/latest) 페이지로 이동합니다.
@@ -34,12 +34,13 @@ Tarkov Essential은 Escape from Tarkov 플레이를 도와주는 애플리케이
 
 ## 사용 방법
 <img src="assets/5.png">
-타르코프 캡쳐 키를 누르면 Maps 에서 플레이어의  위치가 표시됩니다.
 
-또한, PVP 글씨를 누르면 PVE로 전환할 수 있으며
-주요 오브젝트 표시 및 퀘스트 표시가 가능합니다.
+- 타르코프 스크린샷 키를 누르면 Maps 에서 플레이어의  위치가 표시됩니다.
+- PVP 글씨를 누르면 PVE와 프로필 전환을 할 수 있습니다
+- 주요 오브젝트 표시 및 퀘스트 표시가 가능합니다.
+- Ctrl + 마우스 휠 을 이용해 층 이동이 가능합니다.
 
-## 주요 기능
+## 전체 기능
 
 - 음성 알림
   - 매칭 완료
