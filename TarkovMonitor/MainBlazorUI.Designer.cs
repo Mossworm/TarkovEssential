@@ -73,7 +73,7 @@
             // 
             AutoScaleDimensions = new SizeF(8F, 20F);
             AutoScaleMode = AutoScaleMode.Font;
-            ClientSize = new Size(1200, 1000);
+            ClientSize = new Size(1250, 1000);
             Controls.Add(blazorWebView1);
             Icon = (Icon)resources.GetObject("$this.Icon");
             Margin = new Padding(3, 4, 3, 4);
