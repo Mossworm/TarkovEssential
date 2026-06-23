@@ -31,6 +31,9 @@
                 <MudNavLink Href="/raw" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.RawOn">@LocalizationService.GetString("RawLogs")</MudNavLink>
                 <MudNavLink Href="/timers" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Timer">@LocalizationService.GetString("Timers")</MudNavLink>
 			</MudNavMenu>
+			<div style="position: absolute; right: 0; bottom: 32px; left: 0; text-align: center;">
+				<MudLink OnClick="OpenHowToUse">How To Use</MudLink>
+			</div>
 		</MudDrawer>
 		<MudMainContent Class="mt-2">
 			<CascadingValue Name="AppLayout" Value="this">
@@ -87,6 +90,15 @@
 	{
 		var relativePath = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
 		NativeWebViewService.SetMapsVisible(relativePath == "" || relativePath == "maps");
+	}
+
+	private void OpenHowToUse()
+	{
+		Process.Start(new ProcessStartInfo
+		{
+			FileName = "https://github.com/Mossworm/TarkovEssential/blob/master/README.md",
+			UseShellExecute = true
+		});
 	}
 
 	public void Dispose()
