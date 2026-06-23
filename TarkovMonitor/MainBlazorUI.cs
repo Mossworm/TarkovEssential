@@ -108,9 +108,9 @@ namespace TarkovMonitor
             var serviceProvider = services.BuildServiceProvider();
             blazorWebView1.Services = serviceProvider;
             localizationService = serviceProvider.GetRequiredService<LocalizationService>();
-            blazorWebView1.RootComponents.Add<TarkovMonitor.Blazor.App>("#app");
             nativeWebViewService.MapsVisibilityChanged += SetMapsWebViewVisible;
             nativeWebViewService.DrawerOpenChanged += SetMapsDrawerOpen;
+            blazorWebView1.RootComponents.Add<TarkovMonitor.Blazor.App>("#app");
             //services.AddSingleton<TarkovDevRepository>(tarkovdevRepository);
             // Add event watchers
             eft.FleaSold += Eft_FleaSold;

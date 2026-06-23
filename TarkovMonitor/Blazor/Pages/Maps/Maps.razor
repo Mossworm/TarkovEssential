@@ -1,11 +1,18 @@
 @page "/"
 @page "/maps"
 @inject LocalizationService LocalizationService
+@inject NativeWebViewService NativeWebViewService
 @layout AppLayout
+@implements IDisposable
 
 @code {
     [CascadingParameter(Name="AppLayout")]
     public AppLayout AppLayout { get; set; }
+
+    protected override void OnInitialized()
+    {
+        NativeWebViewService.SetMapsVisible(true);
+    }
 
     protected override void OnAfterRender(bool firstRender)
     {
@@ -14,5 +21,10 @@
         {
             AppLayout.SetTitle(LocalizationService.GetString("Maps"));
         }
+    }
+
+    public void Dispose()
+    {
+        NativeWebViewService.SetMapsVisible(false);
     }
 }
