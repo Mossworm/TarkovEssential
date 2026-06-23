@@ -55,7 +55,7 @@ namespace TarkovMonitor
                 Buttons.Add(new("Report", () => {
                     var psi = new ProcessStartInfo
                     {
-                        FileName = "https://github.com/the-hideout/TarkovMonitor/issues",
+                        FileName = "https://github.com/Mossworm/TarkovEssential/issues",
                         UseShellExecute = true,
                     };
                     Process.Start(psi);

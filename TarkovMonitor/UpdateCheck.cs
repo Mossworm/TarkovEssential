@@ -12,7 +12,7 @@ namespace TarkovMonitor
             Task<ReleaseData> GetLatestRelease();
         }
 
-        private static readonly string repo = "the-hideout/TarkovMonitor";
+        private static readonly string repo = "Mossworm/TarkovEssential";
         private static readonly System.Timers.Timer updateCheckTimer;
 
         private static readonly IGitHubAPI api = RestService.For<IGitHubAPI>($"https://api.github.com/repos/{repo}");
