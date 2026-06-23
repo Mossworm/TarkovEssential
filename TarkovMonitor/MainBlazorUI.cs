@@ -34,6 +34,28 @@ namespace TarkovMonitor
         private const int DwmwaTextColor = 36;
         private const int TitleBarColor = 0x002D2F2F; // #2f2f2d as COLORREF (0x00bbggrr)
         private const int TitleBarTextColor = 0x00FFFFFF;
+        private const string MapsAutoConnectScript = @"
+            (() => {
+                const clickConnect = () => {
+                    const connectButton = Array.from(document.querySelectorAll('span.session-id'))
+                        .find(element => element.textContent?.trim() === 'Click to connect');
+                    if (!connectButton) return false;
+                    connectButton.click();
+                    return true;
+                };
+
+                if (clickConnect()) return;
+
+                const observer = new MutationObserver(() => {
+                    if (clickConnect()) observer.disconnect();
+                });
+                observer.observe(document.documentElement, {
+                    childList: true,
+                    subtree: true,
+                    characterData: true
+                });
+                setTimeout(() => observer.disconnect(), 30000);
+            })();";
 
         [DllImport("dwmapi.dll")]
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
@@ -191,12 +213,29 @@ namespace TarkovMonitor
             mapsWebView = new WebView2
             {
                 Name = "mapsWebView",
-                // Source = new Uri("https://www.google.com/"),
                 Source = new Uri("https://tarkov.dev/map/factory"),
                 Visible = false
             };
+            mapsWebView.NavigationCompleted += MapsWebView_NavigationCompleted;
             Controls.Add(mapsWebView);
             UpdateMapsWebViewBounds();
+        }
+
+        private async void MapsWebView_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+        {
+            if (!e.IsSuccess || mapsWebView?.CoreWebView2 == null)
+            {
+                return;
+            }
+
+            try
+            {
+                await mapsWebView.ExecuteScriptAsync(MapsAutoConnectScript);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Could not automatically connect the maps web view: {ex.Message}");
+            }
         }
 
         private void SetMapsWebViewVisible(bool visible)

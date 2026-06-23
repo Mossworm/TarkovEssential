@@ -368,6 +368,13 @@ namespace TarkovMonitor
                         }
                         CurrentProfile.Id = profileIdMatch.Groups["profileId"].Value;
                         CurrentProfile.AccountId = profileIdMatch.Groups["accountId"].Value;
+
+                        if (e.InitialRead && raidInfo.StartedTime != null)
+                        {
+                            // Selecting a profile after a raid means the previously reconstructed raid is over.
+                            raidInfo = new RaidInfo { Profile = CurrentProfile };
+                        }
+
                         if (!e.InitialRead)
                         {
                             if (raidInfo.StartedTime != null && raidInfo.EndedTime == null)
@@ -398,6 +405,7 @@ namespace TarkovMonitor
                     }
                     if (e.InitialRead)
                     {
+                        RestoreRaidState(eventLine, eventDate);
                         continue;
                     }
                     var jsonString = "{}";
@@ -593,6 +601,51 @@ namespace TarkovMonitor
             catch (Exception ex)
             {
                 ExceptionThrown?.Invoke(this, new ExceptionEventArgs(ex, $"parsing {e.Type} log data {e.Data}"));
+            }
+        }
+
+        private void RestoreRaidState(string eventLine, DateTime eventDate)
+        {
+            if (eventLine.Contains("application|scene preset path:"))
+            {
+                raidInfo = new RaidInfo { Profile = CurrentProfile };
+                var bundleMatch = Regex.Match(eventLine, @"scene preset path:maps\/(?<mapBundleName>[a-zA-Z0-9_]+)\.bundle");
+                if (bundleMatch.Success && MapBundles.TryGetValue(bundleMatch.Groups["mapBundleName"].Value, out var mapId))
+                {
+                    raidInfo.Map = mapId;
+                }
+                return;
+            }
+
+            if (eventLine.Contains("application|TRACE-NetworkGameCreate profileStatus"))
+            {
+                var mapMatch = Regex.Match(eventLine, "Location: (?<map>[^,]+)");
+                if (mapMatch.Success)
+                {
+                    raidInfo.Map = mapMatch.Groups["map"].Value;
+                }
+                raidInfo.Online = eventLine.Contains("RaidMode: Online");
+                raidInfo.RaidId = Regex.Match(eventLine, @"shortId: (?<raidId>[A-Z0-9]{6})").Groups["raidId"].Value;
+                raidInfo.Profile = CurrentProfile;
+                return;
+            }
+
+            if (eventLine.Contains("application|GameStarting"))
+            {
+                raidInfo.StartingTime = eventDate;
+                return;
+            }
+
+            if (eventLine.Contains("application|GameStarted"))
+            {
+                raidInfo.StartedTime = eventDate;
+                return;
+            }
+
+            if (eventLine.Contains("application|Network game matching aborted") ||
+                eventLine.Contains("application|Network game matching cancelled"))
+            {
+                raidInfo = new RaidInfo { Profile = CurrentProfile };
             }
         }
 
