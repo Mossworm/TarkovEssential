@@ -1,97 +1,71 @@
-# TarkovMonitor
+# Tarkov Essential
 
-[![build-dev](https://github.com/the-hideout/TarkovMonitor/actions/workflows/build-dev.yml/badge.svg)](https://github.com/the-hideout/TarkovMonitor/actions/workflows/build-dev.yml)
+Tarkov Essential은 Escape from Tarkov 플레이를 도와주는 애플리케이션입니다.
 
-[![Discord](https://img.shields.io/discord/956236955815907388?color=7388DA&label=Discord)](https://discord.gg/XPAsKGHSzH)
+실시간 지도와 유용한 음성 알림을 제공하며, Tarkov Tracker에 퀘스트 진행 상황을 자동으로 업데이트하는 등 여러 편의 기능을 한곳에서 사용할 수 있습니다.
 
-![image](https://github.com/the-hideout/TarkovMonitor/assets/1557581/99602d29-98c8-4738-8757-0fa763d54e9a)
+<img src="assets/1.png">
 
-TarkovMonitor is an Escape from Tarkov companion application that provides useful audio notifications, can automatically update your task progress on Tarkov Tracker, and includes other helpful features.
 
-## Features
+<p>
 
-- Audio notifications
-    - Match found
-    - Raid starting
-    - Restart failed tasks
-    - Runthrough time elapsed
-    - Turn air filter on/off
-    - Scav cooldown
-    - Quest Items Reminder (does not check for actual quest items, just a friendly reminder to allow you to back out of matching)
-    - Customizable sounds for all of the above
-- Goon tracking
-    - Submit reports when you see the Goons to help other players find them
-- Connect to the Tarkov.dev website via remote code
-    - Automatically load the website map for the map you're playing on
-    - Take an in-game screenshot and show your position on the website map
-- Connect to Tarkov Tracker via API token
-    - Automatically mark quests as complete as you complete them
-- Statistics (all stored locally on your computer)
-    - Track your total sales on the flea market
-    - Track how many times you play on each map
-- Visual Timers (have that friend that never heard the audio and asks "has the runthrough timer happened yet?")
-   - Displays "Time in Raid"
-   - Displays countdown for "Runthrough time"
-   - Display countdown for Scav cooldown time
+> [!WARNING]
+> 본 프로그램은 [GPL-3.0 라이선스](./LICENSE)로 배포되며, **본 프로그램 사용으로 인한 어떠한 피해(BSG에 의한 제재 등)에 대해서도 책임지지 않습니다.**
+> 본 프로그램은 [tarkov.dev](https://tarkov.dev/)과 공식적인 관계가 없으며, [tarkov monitor](https://github.com/the-hideout/TarkovMonitor)를 수정하여 제작되었습니다.
 
-## Installation
+## 설치 방법
+1. 이 프로젝트의 [최신 릴리스](https://github.com/Mossworm/TarkovEssential/releases/latest) 페이지로 이동합니다.
+2. `Assets` 항목에서 Tarkov Essential 압축 파일을 내려받습니다.
+3. 내려받은 압축 파일을 원하는 폴더에 풉니다.
+4. 폴더 안의 `TarkovEssential.exe`를 실행합니다.
 
-Head on over to the [latest release](https://github.com/the-hideout/TarkovMonitor/releases/latest) page for this project. Once you are there, you'll see an `Assets` section and you'll want to download the `TarkovMonitor.zip` link:
+## 초기 설정
+<img src="assets/2.png">
+1. 왼쪽 하단에있는 Remote ID를 클릭해 복사합니다.
+<p>
 
-<img width="845" alt="Screenshot 2023-08-10 at 7 58 36 PM" src="https://github.com/the-hideout/TarkovMonitor/assets/23362539/86fbb000-25a3-4d71-bf39-45d622d61e8e">
+<img src="assets/4.png">
+2. Setting 에서 복사한 Remote ID를 붙혀넣은 후 아래 토글 3개를 활성화 해줍니다.
+<br>
+3. 그 후, 타르코프 Logs 폴더 경로도 입력해줍니다.
 
-Once downloaded, extract the zip and run the `TarkovMonitor.exe` executable included within the bundle. Enjoy!
+- 스팀버전 : C:\Program Files (x86)\Steam\steamapps\common\Escape from Tarkov\build\Logs
+- 공홈버전 : %LOCALAPPDATA%\Battlestate Games\Escape from Tarkov\Logs
 
-## Setup
+## 사용 방법
+<img src="assets/5.png">
+타르코프 캡쳐 키를 누르면 Maps 에서 플레이어의  위치가 표시됩니다.
 
-On its own, TarkovMonitor will play audio notifications (e.g., when you match into a raid and when the raid begins). But its most useful features are unlocked when used in conjunction with other tools.
+또한, PVP 글씨를 누르면 PVE로 전환할 수 있으며
+주요 오브젝트 표시 및 퀘스트 표시가 가능합니다.
 
-### Quest Tracking with TarkovTracker
+## 주요 기능
 
-[Tarkov Tracker](https://tarkovtracker.org) is a free website that allows you to track your quest progress. Once you log in to create a Tarkov Tracker account, you can share your quest progress with other tools (including TarkovMonitor) by creating an API token. Navigate to the [Tarkov Tracker settings page](https://tarkovtracker.org/settings), click the `create a token` button, and create a token that has permissions to `get progression` and `write progression`. You can give the token any name you want, but if you're creating it for Tarkov Monitor, it makes sense to name it `Tarkov Monitor`. Then click the `create token` button and click the token's copy button. Do not try to manually highlight the displayed token and copy it; some of the displayed token's characters are obfuscated with asterisks (*). Once you've copied the token, paste it in the Tarkov Tracker API token box in Tarkov Monitor settings and click the `Test Token` button. If you see a pop up indicating success, Tarkov Tracker is ready to start automatically updating your progress on Tarkov Tracker.
-
-Tarkov Tracker only automatically marks a quest as complete if it's running when the quest is completed. If you already completed a bunch of quests prior to running Tarkov Monitor, see [the below section on how to read past progress](#ive-installed-and-run-tarkovmonitor-why-hasnt-it-marked-all-my-completed-quests-as-complete).
-
-### Tarkov.dev Website Integration
-
-The [Tarkov.dev website](https://tarkov.dev) has a "remote control" feature that allows the user to navigate to different pages in a browser window by using a different device. The original use case for this was to have the Tarkov.dev website open on a second monitor as you're playing the game and then using your cellphone as the remote control to load different pages on the website shown on the monitor without having to alt+tab out of the game.
-
-TarkovMonitor can act as the "control" device, which allows it to do things like opening the corresponding map page on the website when you're loading into a raid and show your position (and rotation) on the map when you take a screenshot. To enable this integration, open the Tarkov.dev website, click the `Click to connect` button in the lower left, copy the `ID for remote control` shown in that box, and paste it in the Tarkov Monitor remote id settings. If you keep your browser window open, Tarkov Monitor should be set to control the Tarkov.dev site. Note that if you reload the Tarkov.dev site (including by restarting your browser), you'll need to click the `Click to connect` button again, but the remote code should remain the same.
-
-## FAQ
-
-### How does TarkovMonitor work?
-
-TarkovMonitor simply watches the log files that the game creates as it's running. Certain log messages correspond with particular events, so it's possible to automatically read some game events from these log files.
-
-### I've installed and run TarkovMonitor, why hasn't it marked all my completed quests as complete?
-
-TarkovMonitor only monitors new logs as they are being written while the app is running. Therefore, it doesn't automatically update quest progress that was made prior to the app running. It will, however, still mark quests as complete going forward while the app is running.
-
-If you want to automatically update your progress from previous logs, open the Settings page, scroll down to the Initial Setup section, and click the Read Past Logs button. Tarkov Monitor will then present you with a list of breakpoints to choose the starting point to read logs from. The breakpoints are determined by the game's version number and your player profile id as written into each set of logs. Select the breakpoint corresponding with the start of the wipe for the correct account, click OK, and Tarkov Monitor will process all logs starting from that point through the present for the selected profile and update your quest progress accordingly.
-
-### Is TarkovMonitor a cheat?
-
-We don't have any official word from BSG, but it would be silly for TarkovMonitor to be considered a cheat. It doesn't do anything while players are in-raid because the logs aren't updated while a raid is in-progress. Moreover, the application is simply reading the logs that are written to your computer.
-
-### Can TarkovMonitor update my hideout build progress on Tarkov Tracker?
-
-Unfortunately, there are no log events for when you build hideout stations, so TarkovMonitor cannot automatically mark them as built.
-
-### Does TarkovMonitor update my PMC level on Tarkov Tracker?
-
-PMC level information is not logged by the game, so Tarkov Monitor cannot update it in Tarkov Tracker.
-
-### What is the "Tarkov.dev Website Remote" option for?
-
-The Tarkov.dev website has a feature that allows the user to "control" the website using another device. The typical use case is for someone to have the Tarkov.dev website loaded in a browser on their second monitor and then use their phone as the second device to load pages on the website without having to alt+tab out of the game. TarkovMonitor can act as the remote device and do things like load the Tarkov.dev map page for the map you're loading into a raid on. Linking the remote also enables showing your position on the Tarkov.dev map when you take a screenshot. To get the remote code for Tarkov.dev, just open the Tarkov.dev website in your browser, click the "Click to connect" box in the lower left, and then copy and paste that code into the Remote ID setting box in Tarkov Monitor.
-
-### What is the "Submit Queue Time Data" option for?
-
-When enabled, TarkovMonitor will submit the amount of time it takes to queue for a raid to Tarkov.dev. The information is sent anonymously and only the following pieces of information are sent and saved: the map, the time it took to find a raid, and whether the raid was for PMC or scav.
-
-## Trouble Shooting
-
-If the app won't launch and you see an "invalid WebView2 installation" error (sometimes accompanied by "The system cannot find the file specified"), you're likely hitting a known WebView2 issue.
-
-Follow the solution here: [Error on launching program (invalid WebView2 installation) #22 — solution comment](https://github.com/the-hideout/TarkovMonitor/issues/22#issuecomment-3443766675)
+- 음성 알림
+  - 매칭 완료
+  - 레이드 시작
+  - 실패한 퀘스트 재시작 알림
+  - 런스루 시간 경과
+  - 에어 필터 켜기/끄기
+  - 스캐브 쿨다운
+  - 퀘스트 아이템 확인 알림
+    - 실제 퀘스트 아이템 보유 여부를 검사하는 기능은 아니며, 매칭을 취소할 수 있도록 알려주는 단순 알림입니다.
+  - 위 알림에 사용되는 사운드 변경
+- Tarkov.dev 지도
+  - 애플리케이션 안에서 Tarkov.dev 지도 확인
+  - 플레이 중인 맵의 지도 자동 표시
+  - 게임 내 스크린샷을 이용해 지도에 현재 위치 표시
+- Tarkov.dev 원격 제어 연동
+  - 원격 코드를 이용해 다른 브라우저에 열린 Tarkov.dev 제어
+  - 레이드 입장 시 플레이 중인 맵의 지도 자동 표시
+- Tarkov Tracker 연동
+  - API 토큰을 이용해 Tarkov Tracker 연결
+  - 완료한 퀘스트를 Tarkov Tracker에 자동 반영
+- 통계
+  - 모든 통계는 사용자의 컴퓨터에만 저장됩니다.
+  - 플리마켓 총판매액 기록
+  - 맵별 플레이 횟수 기록
+- 시각적 타이머
+  - 레이드 진행 시간 표시
+  - 런스루 제한 시간 카운트다운
+  - 스캐브 쿨다운 카운트다운
