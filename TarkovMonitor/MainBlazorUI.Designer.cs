@@ -49,10 +49,10 @@
             // 
             // notifyIconTarkovMonitor
             // 
-            notifyIconTarkovMonitor.BalloonTipTitle = "Tarkov Monitor";
+            notifyIconTarkovMonitor.BalloonTipTitle = "Tarkov Essential";
             notifyIconTarkovMonitor.ContextMenuStrip = contextMenuStripTarkovMonitor;
             notifyIconTarkovMonitor.Icon = (Icon)resources.GetObject("notifyIconTarkovMonitor.Icon");
-            notifyIconTarkovMonitor.Text = "Tarkov Monitor";
+            notifyIconTarkovMonitor.Text = "Tarkov Essential";
             notifyIconTarkovMonitor.MouseDoubleClick += notifyIconTarkovMonitor_MouseDoubleClick;
             // 
             // contextMenuStripTarkovMonitor
@@ -78,7 +78,7 @@
             Icon = (Icon)resources.GetObject("$this.Icon");
             Margin = new Padding(3, 4, 3, 4);
             Name = "MainBlazorUI";
-            Text = "Tarkov Monitor";
+            Text = "Tarkov Essential";
             Resize += MainBlazorUI_Resize;
             contextMenuStripTarkovMonitor.ResumeLayout(false);
             ResumeLayout(false);

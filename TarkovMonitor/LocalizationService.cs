@@ -15,7 +15,7 @@ namespace TarkovMonitor
         public LocalizationService(IStringLocalizerFactory localizerFactory)
         {
             _localizerFactory = localizerFactory;
-            _localizer = _localizerFactory.Create("Strings", "TarkovMonitor");
+            _localizer = _localizerFactory.Create("Strings", typeof(Properties.Strings).Assembly.GetName().Name!);
             _resourceManager = Properties.Strings.ResourceManager;
             
             SetCulture(Properties.Settings.Default.language);
