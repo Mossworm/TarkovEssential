@@ -3,7 +3,7 @@ name: Create Release from tag
 on:
   push:
     tags:
-      - '[0-9]+.[0-9]+.[0-9]+'
+      - '\d+\.\d+\.\d+\.\d+'
 
 jobs:
   upload:
