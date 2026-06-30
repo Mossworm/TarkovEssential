@@ -5,6 +5,7 @@ Tarkov Essential은 Escape from Tarkov 플레이를 도와주는 애플리케이
 실시간 지도와 유용한 음성 알림을 제공하며, Tarkov Tracker에 퀘스트 진행 상황을 자동으로 업데이트하는 등 여러 편의 기능을 한곳에서 사용할 수 있습니다.
 
 <img src="assets/1.png">
+<img src="assets/0.png">
 
 
 <p>
@@ -48,36 +49,32 @@ Tarkov Essential은 Tarkov Monitor의 업데이트에 맞춰 업데이트를 진
 
 만약 프로그램이 예상대로 동작하지 않는다면 Messages 탭에서 업데이트 메시지를 클릭하여 업데이트를 진행해주세요.
 
-## 전체 기능
+## 타르코프 트래커 사용법
+<img src="assets/7.png">
+<img src="assets/8.png">
+Tarker 탭을 통해 Tarkov Tracker를 사용할 수 있습니다.
+Tarkov Tracker 는 퀘스트 정보나 완료시 다음 퀘스트, 카파퀘스트 등이 정리되어 있으며 수동으로 체크하면서 퀘스트를 트래킹 할 수 있습니다.
 
-- 음성 알림
-  - 매칭 완료
-  - 레이드 시작
-  - 실패한 퀘스트 재시작 알림
-  - 런스루 시간 경과
-  - 에어 필터 켜기/끄기
-  - 스캐브 쿨다운
-  - 퀘스트 아이템 확인 알림
-    - 실제 퀘스트 아이템 보유 여부를 검사하는 기능은 아니며, 매칭을 취소할 수 있도록 알려주는 단순 알림입니다.
-  - 위 알림에 사용되는 사운드 변경
-- Tarkov.dev 지도
-  - 애플리케이션 안에서 Tarkov.dev 지도 확인
-  - 플레이 중인 맵의 지도 자동 표시
-  - 게임 내 스크린샷을 이용해 지도에 현재 위치 표시
-- Tarkov.dev 원격 제어 연동
-  - 원격 코드를 이용해 다른 브라우저에 열린 Tarkov.dev 제어
-  - 레이드 입장 시 플레이 중인 맵의 지도 자동 표시
-- Tarkov Tracker 연동
-  - API 토큰을 이용해 Tarkov Tracker 연결
-  - 완료한 퀘스트를 Tarkov Tracker에 자동 반영
-- 통계
-  - 모든 통계는 사용자의 컴퓨터에만 저장됩니다.
-  - 플리마켓 총판매액 기록
-  - 맵별 플레이 횟수 기록
-- 시각적 타이머
-  - 레이드 진행 시간 표시
-  - 런스루 제한 시간 카운트다운
-  - 스캐브 쿨다운 카운트다운
+그 외에도 메인 스토리 체크나 하이드아웃 재료 체크등 다양한 기능이 존재합니다.
+
+### 타르코프 트래커 연동방법
+Tarkov Tracker를 Tarkov Essential과 연동할 경우 Maps에 현재 진행중인 퀘스트만 표시해주며, 퀘스트 클리어시 자동으로 Tarkov Tracker에 완료 처리가 됩니다.
+
+<img src="assets/11.png">
+1. Tarkov Tracker 회원가입 후 Setting에서 API키를 발급받아줍니다.
+<p>
+
+<img src="assets/12.png">
+2. Tarkov Essential에서 발급받은 API키를 입력해줍니다.
+<p>
+
+<img src="assets/13.png">
+3. Maps에서 Settings에 들어가 마찬가지로 발급받은 API키를 입력후 Use TarkovTracker를 활성화 해줍니다.
+<p>
+
+<img src="assets/14.png">
+4. 진행도를 맞추기위해 Tasks에서 이미 완료한 퀘스트를 수동으로 완료처리를 해줍니다. (한번만 해주면 그 다음부터는 Tarkov Essential이 알아서 완료처리를 해줍니다.)
+<p>
 
 ## 문제 해결
 - 앱이 실행되지 않고 "잘못된 WebView2 설치" 오류(때때로 "지정된 파일을 찾을 수 없습니다"라는 오류와 함께 표시됨)가 나타나는 경우, 알려진 WebView2 문제에 직면했을 가능성이 높습니다. 
