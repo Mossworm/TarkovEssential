@@ -1,0 +1,29 @@
+@page "/tracker"
+@inject LocalizationService LocalizationService
+@inject NativeWebViewService NativeWebViewService
+@layout AppLayout
+@implements IDisposable
+
+@code {
+    [CascadingParameter(Name="AppLayout")]
+    public AppLayout AppLayout { get; set; }
+
+    protected override void OnInitialized()
+    {
+        NativeWebViewService.SetTrackerVisible(true);
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        base.OnAfterRender(firstRender);
+        if (firstRender)
+        {
+            AppLayout.SetTitle(LocalizationService.GetString("Tracker"));
+        }
+    }
+
+    public void Dispose()
+    {
+        NativeWebViewService.SetTrackerVisible(false);
+    }
+}
