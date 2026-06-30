@@ -285,6 +285,9 @@
   <data name="Maps" xml:space="preserve">
     <value>Maps</value>
   </data>
+  <data name="Tracker" xml:space="preserve">
+    <value>Tracker</value>
+  </data>
   <data name="Messages" xml:space="preserve">
     <value>Messages</value>
   </data>

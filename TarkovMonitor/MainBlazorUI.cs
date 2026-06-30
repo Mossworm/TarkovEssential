@@ -26,6 +26,7 @@ namespace TarkovMonitor
         private readonly System.Timers.Timer scavCooldownTimer;
         private LocalizationService localizationService;
         private WebView2? mapsWebView;
+        private WebView2? trackerWebView;
         private bool inRaid;
         private bool mapsDrawerOpen = true;
         private const int AppBarHeight = 48;
@@ -64,6 +65,7 @@ namespace TarkovMonitor
         {
             InitializeComponent();
             InitializeMapsWebView();
+            InitializeTrackerWebView();
             if (Properties.Settings.Default.upgradeRequired)
             {
                 Properties.Settings.Default.Upgrade();
@@ -109,6 +111,7 @@ namespace TarkovMonitor
             blazorWebView1.Services = serviceProvider;
             localizationService = serviceProvider.GetRequiredService<LocalizationService>();
             nativeWebViewService.MapsVisibilityChanged += SetMapsWebViewVisible;
+            nativeWebViewService.TrackerVisibilityChanged += SetTrackerWebViewVisible;
             nativeWebViewService.DrawerOpenChanged += SetMapsDrawerOpen;
             blazorWebView1.RootComponents.Add<TarkovMonitor.Blazor.App>("#app");
             //services.AddSingleton<TarkovDevRepository>(tarkovdevRepository);
@@ -218,7 +221,7 @@ namespace TarkovMonitor
             };
             mapsWebView.NavigationCompleted += MapsWebView_NavigationCompleted;
             Controls.Add(mapsWebView);
-            UpdateMapsWebViewBounds();
+            UpdateNativeWebViewBounds();
         }
 
         private async void MapsWebView_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
@@ -238,6 +241,18 @@ namespace TarkovMonitor
             }
         }
 
+        private void InitializeTrackerWebView()
+        {
+            trackerWebView = new WebView2
+            {
+                Name = "trackerWebView",
+                Source = new Uri("https://tarkovtracker.org/tasks"),
+                Visible = false
+            };
+            Controls.Add(trackerWebView);
+            UpdateNativeWebViewBounds();
+        }
+
         private void SetMapsWebViewVisible(bool visible)
         {
             if (InvokeRequired)
@@ -254,10 +269,43 @@ namespace TarkovMonitor
             mapsWebView.Visible = visible;
             if (visible)
             {
-                UpdateMapsWebViewBounds();
+                if (trackerWebView != null)
+                {
+                    trackerWebView.Visible = false;
+                }
+                UpdateNativeWebViewBounds();
                 mapsWebView.BringToFront();
             }
-            else
+            else if (trackerWebView?.Visible != true)
+            {
+                blazorWebView1.BringToFront();
+            }
+        }
+
+        private void SetTrackerWebViewVisible(bool visible)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(() => SetTrackerWebViewVisible(visible));
+                return;
+            }
+
+            if (trackerWebView == null)
+            {
+                return;
+            }
+
+            trackerWebView.Visible = visible;
+            if (visible)
+            {
+                if (mapsWebView != null)
+                {
+                    mapsWebView.Visible = false;
+                }
+                UpdateNativeWebViewBounds();
+                trackerWebView.BringToFront();
+            }
+            else if (mapsWebView?.Visible != true)
             {
                 blazorWebView1.BringToFront();
             }
@@ -272,23 +320,27 @@ namespace TarkovMonitor
             }
 
             mapsDrawerOpen = open;
-            UpdateMapsWebViewBounds();
+            UpdateNativeWebViewBounds();
         }
 
-        private void UpdateMapsWebViewBounds()
+        private void UpdateNativeWebViewBounds()
         {
-            if (mapsWebView == null)
-            {
-                return;
-            }
-
             var leftOffset = mapsDrawerOpen ? DrawerWidth : 0;
-
-            mapsWebView.Bounds = new Rectangle(
+            var bounds = new Rectangle(
                 leftOffset,
                 AppBarHeight,
                 Math.Max(0, ClientSize.Width - leftOffset),
                 Math.Max(0, ClientSize.Height - AppBarHeight));
+
+            if (mapsWebView != null)
+            {
+                mapsWebView.Bounds = bounds;
+            }
+
+            if (trackerWebView != null)
+            {
+                trackerWebView.Bounds = bounds;
+            }
         }
 
         protected override void OnHandleCreated(EventArgs e)
@@ -300,7 +352,7 @@ namespace TarkovMonitor
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
-            UpdateMapsWebViewBounds();
+            UpdateNativeWebViewBounds();
         }
 
         private void ApplyTitleBarColors()
