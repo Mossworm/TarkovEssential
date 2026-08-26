@@ -1171,7 +1171,8 @@
         try
         {
             var savedNickname = TarkovTracker.SetOrgAccountNickname(accountGroup.AccountId, nickname);
-            AddProtectedKeyMessage($"Saved the TarkovTracker.org account nickname “{savedNickname}”.", ("Account ID", accountGroup.AccountId));
+            messageLog.AddMessage($"Saved the TarkovTracker.org account nickname \"{savedNickname}\"", "info");
+            //AddProtectedKeyMessage($"Saved the TarkovTracker.org account nickname “{savedNickname}”.", ("Account ID", accountGroup.AccountId));
         }
         catch (Exception ex)
         {
