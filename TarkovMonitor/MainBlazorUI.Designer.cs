@@ -43,7 +43,7 @@
             blazorWebView1.Location = new Point(0, 0);
             blazorWebView1.Margin = new Padding(3, 4, 3, 4);
             blazorWebView1.Name = "blazorWebView1";
-            blazorWebView1.Size = new Size(914, 667);
+            blazorWebView1.Size = new Size(1200, 1000);
             blazorWebView1.TabIndex = 0;
             blazorWebView1.Text = "blazorWebView1";
             // 
@@ -74,7 +74,7 @@
             AutoScaleDimensions = new SizeF(8F, 20F);
             AutoScaleMode = AutoScaleMode.Font;
             BackColor = Color.FromArgb(47, 47, 45);
-            ClientSize = new Size(914, 667);
+            ClientSize = new Size(1200, 1000);
             Controls.Add(blazorWebView1);
             FormBorderStyle = FormBorderStyle.None;
             Icon = (Icon)resources.GetObject("$this.Icon");

@@ -592,10 +592,10 @@ namespace TarkovMonitor
         {
             var leftOffset = navigationDrawerOpen ? NavigationDrawerWidth : 0;
             var bounds = new Rectangle(
-                leftOffset,
+                leftOffset + ResizeBorderWidth,
                 AppBarHeight,
-                Math.Max(0, ClientSize.Width - leftOffset),
-                Math.Max(0, ClientSize.Height - AppBarHeight));
+                Math.Max(0, ClientSize.Width - leftOffset - (ResizeBorderWidth * 2)),
+                Math.Max(0, ClientSize.Height - AppBarHeight - ResizeBorderWidth));
 
             if (mapsWebView != null)
             {
@@ -1269,6 +1269,12 @@ namespace TarkovMonitor
 
                     TarkovDev.PublishApiData(data, profileSnapshot);
                     published = true;
+                }
+
+                var restoredRaid = eft.PublishRestoredRaid();
+                if (restoredRaid?.Map != null && Properties.Settings.Default.autoNavigateMap)
+                {
+                    await NavigateToMapWithDiagnostics(restoredRaid.Map);
                 }
 
                 if (eft.IsGameRunning && !allowPersistedProfile)

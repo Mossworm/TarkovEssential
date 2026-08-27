@@ -25,6 +25,9 @@ namespace TarkovMonitor
         private readonly object monitorsGate = new();
         private readonly HashSet<LogMonitor> pendingInitialReads = new();
         private bool applicationInitialReadComplete;
+        private string restoredRaidScenePath = "";
+        private string restoredRaidMapNameId = "";
+        private bool restoredRaidPublished;
         private bool logWatcherRecoveryInProgress;
         private readonly HashSet<string> reportedSessionModeFailures = new(StringComparer.OrdinalIgnoreCase);
         private readonly object reportedSessionModeFailuresLock = new();
@@ -776,6 +779,9 @@ namespace TarkovMonitor
                         {
                             // Selecting a profile after a raid means the previously reconstructed raid is over.
                             raidInfo = new RaidInfo { Profile = CurrentProfile };
+                            restoredRaidScenePath = "";
+                            restoredRaidMapNameId = "";
+                            restoredRaidPublished = false;
                         }
 
                         if (!e.InitialRead)
@@ -1016,11 +1022,14 @@ namespace TarkovMonitor
             if (eventLine.Contains("application|scene preset path:"))
             {
                 raidInfo = new RaidInfo { Profile = CurrentProfile };
+                restoredRaidScenePath = "";
+                restoredRaidMapNameId = "";
+                restoredRaidPublished = false;
                 var scenePathMatch = Regex.Match(eventLine, @"scene preset path:(?<scenePath>maps\/[a-zA-Z0-9_]+\.bundle)");
                 if (scenePathMatch.Success)
                 {
-                    var scenePath = scenePathMatch.Groups["scenePath"].Value;
-                    raidInfo.Map = TarkovDev.Maps.Find(map => map.scenePath == scenePath);
+                    restoredRaidScenePath = scenePathMatch.Groups["scenePath"].Value;
+                    raidInfo.Map = TarkovDev.Maps.Find(map => map.scenePath == restoredRaidScenePath);
                 }
                 return;
             }
@@ -1030,8 +1039,8 @@ namespace TarkovMonitor
                 var mapMatch = Regex.Match(eventLine, "Location: (?<map>[^,]+)");
                 if (mapMatch.Success)
                 {
-                    var mapNameId = mapMatch.Groups["map"].Value;
-                    raidInfo.Map = TarkovDev.Maps.Find(map => map.nameId == mapNameId);
+                    restoredRaidMapNameId = mapMatch.Groups["map"].Value;
+                    raidInfo.Map = TarkovDev.Maps.Find(map => map.nameId == restoredRaidMapNameId);
                 }
                 raidInfo.Online = eventLine.Contains("RaidMode: Online");
                 raidInfo.RaidId = Regex.Match(eventLine, @"shortId: (?<raidId>[A-Z0-9]{6})").Groups["raidId"].Value;
@@ -1055,7 +1064,33 @@ namespace TarkovMonitor
                 eventLine.Contains("application|Network game matching cancelled"))
             {
                 raidInfo = new RaidInfo { Profile = CurrentProfile };
+                restoredRaidScenePath = "";
+                restoredRaidMapNameId = "";
+                restoredRaidPublished = false;
             }
+        }
+
+        public RaidInfo? PublishRestoredRaid()
+        {
+            if (restoredRaidPublished
+                || !InitialLogsRead
+                || !IsGameRunning
+                || raidInfo.StartedTime == null)
+            {
+                return null;
+            }
+
+            raidInfo.Map ??= TarkovDev.Maps.Find(map => map.nameId == restoredRaidMapNameId);
+            raidInfo.Map ??= TarkovDev.Maps.Find(map => map.scenePath == restoredRaidScenePath);
+            if (raidInfo.Map == null)
+            {
+                return null;
+            }
+
+            restoredRaidPublished = true;
+            raidInfo.Profile = CurrentProfile.Snapshot();
+            RaidStarted?.Invoke(this, new(raidInfo, CurrentProfile));
+            return raidInfo;
         }
 
         private void ProcessTimer_Elapsed(object? sender, System.Timers.ElapsedEventArgs e)
