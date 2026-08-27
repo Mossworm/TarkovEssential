@@ -66,7 +66,8 @@ jobs:
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # pin@v3.0.2
         with:
           files: TarkovMonitor.zip
-          prerelease: true
+          prerelease: false
+          make_latest: true
           fail_on_unmatched_files: true
           generate_release_notes: true
         env:
