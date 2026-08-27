@@ -10,15 +10,21 @@ class Splash : Form
     private float _opacity = 1.0f;
     public Bitmap? BackgroundBitmap;
 
-    private readonly string[] _webview2RegKeys = new[]
+    private static readonly string[] _webview2RegKeys = new[]
     {
         @"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
         @"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
         @"HKEY_CURRENT_USER\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
     };
 
-    private System.Timers.Timer splashTimer = new System.Timers.Timer();
+    private System.Windows.Forms.Timer splashTimer = new System.Windows.Forms.Timer();
+    private readonly DiagnosticsService diagnostics;
+    private readonly bool waitForReadiness;
+    private bool minimumTimeElapsed;
+    private bool readyToClose;
 
+    [System.ComponentModel.Browsable(false)]
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public new float Opacity
     {
         get
@@ -35,64 +41,109 @@ class Splash : Form
         }
     }
 
-    public Splash(Bitmap bitmap, int splashTime)
+    public Splash(Bitmap bitmap, int splashTime, DiagnosticsService? diagnostics = null, bool waitForReadiness = false)
     {
+        this.diagnostics = diagnostics ?? new DiagnosticsService();
+        this.waitForReadiness = waitForReadiness;
         // Window settings
         this.TopMost = true;
         this.ShowInTaskbar = false;
+        // Keep the branding window at the logo's native size. The splash is
+        // intentionally a separate window; it must not become a full-screen
+        // black canvas or cover the application while the UI is starting.
         this.Size = bitmap.Size;
         this.StartPosition = FormStartPosition.Manual;
-        this.Top = (Screen.PrimaryScreen.Bounds.Height - this.Height) / 2;
-        this.Left = (Screen.PrimaryScreen.Bounds.Width - this.Width) / 2;
-        if (splashTime > 1)
+		// Must be called before the splash is shown.
+		this.BackgroundBitmap = bitmap;
+		this.SelectBitmap(BackgroundBitmap);
+		this.BackColor = Color.Black;
+
+		splashTimer = new System.Windows.Forms.Timer { Interval = splashTime };
+		splashTimer.Tick += (sender, e) =>
 		{
-			// Must be called before setting bitmap
-			this.BackgroundBitmap = bitmap;
-			this.SelectBitmap(BackgroundBitmap);
-		}
-		this.BackColor = Color.Red;
-
-		// Set current working directory to executable location
-		Directory.SetCurrentDirectory(AppDomain.CurrentDomain.BaseDirectory);
-
-        // Install webview2 runtime if it is not already
-        var existing = _webview2RegKeys.Any(key => Registry.GetValue(key, "pv", null) != null);
-        if (!existing) InstallWebview2Runtime();
-
-		splashTimer = new System.Timers.Timer(splashTime);
-		splashTimer.AutoReset = false;
-		splashTimer.Elapsed += (sender, e) =>
-		{
-			this.Invoke((MethodInvoker)delegate
+			minimumTimeElapsed = true;
+			splashTimer.Stop();
+			if (!waitForReadiness || readyToClose)
 			{
-				this.Close();
-			});
+				Close();
+			}
 		};
-		splashTimer.Start();
-	}
+    }
 
-    private void InstallWebview2Runtime()
+    protected override void OnShown(EventArgs e)
     {
-        using var client = new WebClient();
-        client.DownloadFile("https://go.microsoft.com/fwlink/p/?LinkId=2124703", "MicrosoftEdgeWebview2Setup.exe");
+        base.OnShown(e);
 
-        var startInfo = new ProcessStartInfo();
-        startInfo.CreateNoWindow = false;
-        startInfo.UseShellExecute = false;
-        startInfo.FileName = "MicrosoftEdgeWebview2Setup.exe";
-        startInfo.WindowStyle = ProcessWindowStyle.Hidden;
-        startInfo.Arguments = "/install";
+        // Start the minimum-display timer only after the splash is actually
+        // visible. Starting it in the constructor lets WebView startup work
+        // consume part of the interval and can make the splash flash away.
+        if (!minimumTimeElapsed && !splashTimer.Enabled)
+        {
+            splashTimer.Start();
+        }
+    }
 
+    public void CloseWhenReady()
+    {
+        readyToClose = true;
+        if (!minimumTimeElapsed || IsDisposed)
+        {
+            return;
+        }
+
+        if (InvokeRequired)
+        {
+            BeginInvoke((MethodInvoker)CloseWhenReady);
+            return;
+        }
+
+        Close();
+    }
+
+    public void SetStartupLocation(Point location)
+    {
+        Location = location;
+        if (BackgroundBitmap != null && IsHandleCreated)
+        {
+            // UpdateLayeredWindow receives the native location explicitly;
+            // refresh it after the launcher places the separate splash window.
+            SelectBitmap(BackgroundBitmap);
+        }
+    }
+
+    public static void EnsureWebView2Runtime(DiagnosticsService diagnostics)
+    {
+        var existing = _webview2RegKeys.Any(key => Registry.GetValue(key, "pv", null) != null);
+        if (!existing)
+        {
+            InstallWebview2Runtime(diagnostics);
+        }
+    }
+
+    private static void InstallWebview2Runtime(DiagnosticsService diagnostics)
+    {
         try
         {
+            using var client = new WebClient();
+            client.DownloadFile("https://go.microsoft.com/fwlink/p/?LinkId=2124703", "MicrosoftEdgeWebview2Setup.exe");
+
+            var startInfo = new ProcessStartInfo();
+            startInfo.CreateNoWindow = false;
+            startInfo.UseShellExecute = false;
+            startInfo.FileName = "MicrosoftEdgeWebview2Setup.exe";
+            startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+            startInfo.Arguments = "/install";
+
             // Start the process with the info we specified.
             // Call WaitForExit and then the using statement will close.
             var exeProcess = Process.Start(startInfo);
             exeProcess?.WaitForExit();
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            Debug.WriteLine("Could not install WebView");
+            diagnostics.Capture(
+                new DiagnosticContext("TM-STARTUP-WEBVIEW-001", "InstallWebView2Runtime", "Startup", "WebView2", "The embedded web view runtime could not be installed."),
+                ex);
         }
 
         try

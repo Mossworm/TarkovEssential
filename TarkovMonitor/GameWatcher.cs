@@ -11,42 +11,141 @@ namespace TarkovMonitor
     internal class GameWatcher
     {
         private Process? process;
+        private const string GameStoppingMarker = "EFT.NetworkGame`1:GameStopping()";
+        private string outputLogTail = "";
         private readonly System.Timers.Timer processTimer;
         private readonly FileSystemWatcher logFileCreateWatcher;
         private readonly FileSystemWatcher screenshotWatcher;
+        private readonly bool historicalReplay;
+        private Profile parsingProfile = new();
+        private Profile ActiveProfile => historicalReplay ? parsingProfile : CurrentProfile;
         private string _logsPath = "";
+        private bool _logsPathResolutionFailed;
+        private readonly object initialReadGate = new();
+        private readonly object monitorsGate = new();
+        private readonly HashSet<LogMonitor> pendingInitialReads = new();
+        private bool applicationInitialReadComplete;
+        private bool logWatcherRecoveryInProgress;
+        private readonly HashSet<string> reportedSessionModeFailures = new(StringComparer.OrdinalIgnoreCase);
+        private readonly object reportedSessionModeFailuresLock = new();
+        private const string SteamEftAppId = "3932890";
+        private static readonly string[] EftUninstallRegistryPaths =
+        {
+            @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\EscapeFromTarkov",
+            @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\EscapeFromTarkov",
+            @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 3932890",
+            @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 3932890",
+        };
         public static Profile CurrentProfile { get; set; } = new();
         public static bool ReadingPastLogs = false;
         public bool InitialLogsRead { get; private set; } = false;
+        public bool IsGameRunning
+        {
+            get
+            {
+                try
+                {
+                    if (process != null && !process.HasExited)
+                    {
+                        return true;
+                    }
+
+                    var processes = Process.GetProcessesByName("EscapeFromTarkov");
+                    try
+                    {
+                        return processes.Length > 0;
+                    }
+                    finally
+                    {
+                        foreach (var candidate in processes)
+                        {
+                            candidate.Dispose();
+                        }
+                    }
+                }
+                catch
+                {
+                    // If process state cannot be read, block manual historical
+                    // assignment from replacing a potentially live identity.
+                    return true;
+                }
+            }
+        }
         public string LogsPath { 
             get
             {
-                if (_logsPath != "")
+                if (!string.IsNullOrWhiteSpace(_logsPath))
                 {
                     return _logsPath;
                 }
-                if (Properties.Settings.Default.customLogsPath != null && Properties.Settings.Default.customLogsPath != "")
+                if (!string.IsNullOrWhiteSpace(Properties.Settings.Default.customLogsPath))
                 {
-                    _logsPath = Properties.Settings.Default.customLogsPath;
+                    _logsPathResolutionFailed = false;
+                    _logsPath = Properties.Settings.Default.customLogsPath.Trim();
                     return _logsPath;
+                }
+                if (_logsPathResolutionFailed)
+                {
+                    return "";
                 }
                 try
                 {
                     _logsPath = GetDefaultLogsFolder();
+                    _logsPathResolutionFailed = false;
                 }
                 catch (Exception ex)
                 {
+                    _logsPathResolutionFailed = true;
                     ExceptionThrown?.Invoke(this, new ExceptionEventArgs(ex, "getting logs path"));
                 }
                 return _logsPath;
             }
             set
             {
-                _logsPath = value;
-                if (logFileCreateWatcher.EnableRaisingEvents)
+                _logsPath = value?.Trim() ?? "";
+                _logsPathResolutionFailed = false;
+                if (!logFileCreateWatcher.EnableRaisingEvents)
                 {
-                    logFileCreateWatcher.Path = LogsPath;
-                    WatchLogsFolder(GetLatestLogFolder());
+                    return;
+                }
+
+                if (string.IsNullOrWhiteSpace(_logsPath))
+                {
+                    logFileCreateWatcher.EnableRaisingEvents = false;
+                    ResetLogMonitoring();
+                    var defaultLogsPath = LogsPath;
+                    if (_logsPathResolutionFailed || string.IsNullOrWhiteSpace(defaultLogsPath))
+                    {
+                        return;
+                    }
+                    try
+                    {
+                        ConfigureLogWatcher(defaultLogsPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        ExceptionThrown?.Invoke(this, new ExceptionEventArgs(ex, "updating game watcher logs path"));
+                    }
+                    return;
+                }
+
+                if (!Directory.Exists(_logsPath))
+                {
+                    logFileCreateWatcher.EnableRaisingEvents = false;
+                    ResetLogMonitoring();
+                    ExceptionThrown?.Invoke(this, new ExceptionEventArgs(
+                        new DirectoryNotFoundException($"The configured EFT logs folder does not exist: {_logsPath}"),
+                        "updating game watcher logs path"));
+                    return;
+                }
+
+                try
+                {
+                    ConfigureLogWatcher(_logsPath);
+                }
+                catch (Exception ex)
+                {
+                    ExceptionThrown?.Invoke(this, new ExceptionEventArgs(ex, "updating game watcher logs path"));
                 }
 
             }
@@ -54,13 +153,17 @@ namespace TarkovMonitor
         public string CurrentLogsFolder {
             get
             {
-                if (Monitors.Count == 0)
+                LogMonitor? monitor;
+                lock (monitorsGate)
                 {
-                    return "";
+                    if (!Monitors.TryGetValue(GameLogType.Application, out monitor))
+                    {
+                        return "";
+                    }
                 }
                 try
                 {
-                    var logInfo = new FileInfo(Monitors[0].Path);
+                    var logInfo = new FileInfo(monitor.Path);
                     return logInfo.DirectoryName ?? "";
                 }
                 catch { }
@@ -69,6 +172,7 @@ namespace TarkovMonitor
             }
         }
         private readonly Dictionary<string, RaidInfo> Raids = new();
+        private bool matchingStatusPublished;
         public string ScreenshotsPath
         {
             get
@@ -84,18 +188,20 @@ namespace TarkovMonitor
         public event EventHandler<ExceptionEventArgs>? ExceptionThrown;
         public event EventHandler<DebugEventArgs>? DebugMessage;
         public event EventHandler? GameStarted;
+        public event EventHandler? GameStopped;
         public event EventHandler<LogContentEventArgs<GroupLogContent>>? GroupInviteAccept;
         public event EventHandler<LogContentEventArgs<GroupRaidSettingsLogContent>>? GroupRaidSettings;
         public event EventHandler<LogContentEventArgs<GroupMatchRaidReadyLogContent>>? GroupMemberReady;
         public event EventHandler? GroupDisbanded;
         public event EventHandler<LogContentEventArgs<GroupMatchUserLeaveLogContent>>? GroupUserLeave;
         public event EventHandler<RaidInfoEventArgs>? MapLoading;
-        //public event EventHandler<RaidInfoEventArgs>? MatchingStarted;
+        public event EventHandler<RaidInfoEventArgs>? MatchingStarted;
         public event EventHandler<RaidInfoEventArgs>? MatchFound; // only fires on initial load into a raid
         public event EventHandler<RaidInfoEventArgs>? MapLoaded; // fires on initial and subsequent loads into a raid
         public event EventHandler<RaidInfoEventArgs>? MatchingAborted;
         public event EventHandler<RaidInfoEventArgs>? RaidStarting;
         public event EventHandler<RaidInfoEventArgs>? RaidStarted;
+        public event EventHandler? RaidStopping;
         public event EventHandler<RaidExitedEventArgs>? RaidExited;
         public event EventHandler<RaidInfoEventArgs>? RaidEnded;
         public event EventHandler<RaidInfoEventArgs>? ExitedPostRaidMenus;
@@ -108,6 +214,7 @@ namespace TarkovMonitor
         public event EventHandler<PlayerPositionEventArgs>? PlayerPosition;
         public event EventHandler<ProfileEventArgs> ProfileChanged;
         public event EventHandler<ProfileEventArgs> InitialReadComplete;
+        public event EventHandler<ProfileEventArgs>? ProfileReady;
         public event EventHandler<ControlSettingsEventArgs> ControlSettings;
 
         private static string logPatternPrefix = @"(?<date>^\d{4}-\d{2}-\d{2}) (?<time>\d{2}:\d{2}:\d{2}\.\d{3})(?<tzoffset> [+-]\d{2}:\d{2})?\|";
@@ -115,53 +222,177 @@ namespace TarkovMonitor
 
         public static string GetDefaultLogsFolder()
         {
-            string[] paths = {
-                @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\EscapeFromTarkov",
-                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 3932890"
-            };
-            foreach (var path in paths)
+            foreach (var installPath in GetRegistryInstallLocations())
             {
-                using RegistryKey? regKey = Registry.LocalMachine.OpenSubKey(path);
-                if (regKey == null)
-                {
-                    continue;
-                }
-                var installPath = regKey.GetValue("InstallLocation")?.ToString();
-                if (installPath == null)
-                {
-                    continue;
-                }
-                var logsPath = Path.Combine(installPath, "Logs");
-                if (!Directory.Exists(logsPath))
-                {
-                    logsPath = Path.Combine(installPath, "build", "Logs");
-                }
-                if (Directory.Exists(logsPath))
+                var logsPath = GetLogsFolder(installPath);
+                if (logsPath != null)
                 {
                     return logsPath;
                 }
             }
-		    throw new Exception("No Tarkov install path found");
-		}
+            foreach (var libraryPath in GetSteamLibraries())
+            {
+                var installPath = GetSteamEftInstallPath(libraryPath);
+                var logsPath = installPath == null ? null : GetLogsFolder(installPath);
+                if (logsPath != null)
+                {
+                    return logsPath;
+                }
+            }
 
-        public static Dictionary<string, string> MapBundles = new() {
-            { "city_preset", "TarkovStreets" },
-            { "customs_preset", "bigmap" },
-            { "factory_day_preset", "factory4_day" },
-            { "factory_night_preset", "factory4_night" },
-            { "laboratory_preset", "laboratory" },
-            { "labyrinth_preset", "Labyrinth" },
-            { "lighthouse_preset", "Lighthouse" },
-            { "rezerv_base_preset", "RezervBase" },
-            { "sandbox_preset", "Sandbox" },
-            { "sandbox_high_preset", "Sandbox_high" },
-            { "shopping_mall", "Interchange" },
-            { "shoreline_preset", "Shoreline" },
-            { "woods_preset", "Woods" },
-        };
+            // A missing installation is a valid first-run state. Callers keep
+            // monitoring dormant until the user configures a logs folder.
+            return "";
+        }
 
-        public GameWatcher()
+        private static string? GetLogsFolder(string installPath)
+        {
+            if (string.IsNullOrWhiteSpace(installPath))
+            {
+                return null;
+            }
+
+            foreach (var logsPath in new[]
+            {
+                Path.Combine(installPath, "Logs"),
+                Path.Combine(installPath, "build", "Logs")
+            })
+            {
+                if (Directory.Exists(logsPath))
+                {
+                    return Path.GetFullPath(logsPath);
+                }
+            }
+
+            return null;
+        }
+
+        private static IEnumerable<string> GetRegistryInstallLocations()
+        {
+            var installLocations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var hives = new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine };
+            var views = new[] { RegistryView.Default, RegistryView.Registry32, RegistryView.Registry64 };
+
+            foreach (var hive in hives)
+            {
+                foreach (var view in views)
+                {
+                    using var baseKey = RegistryKey.OpenBaseKey(hive, view);
+                    foreach (var registryPath in EftUninstallRegistryPaths)
+                    {
+                        using var uninstallKey = baseKey.OpenSubKey(registryPath);
+                        var installPath = uninstallKey?.GetValue("InstallLocation")?.ToString();
+                        if (!string.IsNullOrWhiteSpace(installPath))
+                        {
+                            installLocations.Add(installPath);
+                        }
+                    }
+                }
+            }
+
+            return installLocations;
+        }
+
+        private static IEnumerable<string> GetSteamInstallRoots()
+        {
+            var steamRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var hives = new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine };
+            var views = new[] { RegistryView.Default, RegistryView.Registry32, RegistryView.Registry64 };
+
+            foreach (var hive in hives)
+            {
+                foreach (var view in views)
+                {
+                    using var baseKey = RegistryKey.OpenBaseKey(hive, view);
+                    using var steamKey = baseKey.OpenSubKey(@"SOFTWARE\Valve\Steam");
+                    foreach (var valueName in new[] { "SteamPath", "InstallPath" })
+                    {
+                        var steamPath = steamKey?.GetValue(valueName)?.ToString();
+                        if (!string.IsNullOrWhiteSpace(steamPath) && Directory.Exists(steamPath))
+                        {
+                            steamRoots.Add(Path.GetFullPath(steamPath));
+                        }
+                    }
+                }
+            }
+
+            return steamRoots;
+        }
+
+        private static IEnumerable<string> GetSteamLibraries()
+        {
+            var libraries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var steamRoot in GetSteamInstallRoots())
+            {
+                libraries.Add(steamRoot);
+                var libraryFoldersPath = Path.Combine(steamRoot, "steamapps", "libraryfolders.vdf");
+                if (!File.Exists(libraryFoldersPath))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var contents = File.ReadAllText(libraryFoldersPath);
+                    var matches = Regex.Matches(contents, @"""path""\s+""(?<path>[^""]+)""", RegexOptions.IgnoreCase);
+                    foreach (Match match in matches)
+                    {
+                        var libraryPath = match.Groups["path"].Value.Replace("\\\\", "\\");
+                        if (Directory.Exists(libraryPath))
+                        {
+                            libraries.Add(Path.GetFullPath(libraryPath));
+                        }
+                    }
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+            }
+
+            return libraries;
+        }
+
+        private static string? GetSteamEftInstallPath(string libraryPath)
+        {
+            var candidates = new List<string>();
+            var manifestPath = Path.Combine(libraryPath, "steamapps", $"appmanifest_{SteamEftAppId}.acf");
+            if (File.Exists(manifestPath))
+            {
+                try
+                {
+                    var contents = File.ReadAllText(manifestPath);
+                    var match = Regex.Match(contents, @"""installdir""\s+""(?<directory>[^""]+)""", RegexOptions.IgnoreCase);
+                    if (match.Success)
+                    {
+                        candidates.Add(Path.Combine(libraryPath, "steamapps", "common", match.Groups["directory"].Value));
+                    }
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+            }
+
+            candidates.Add(Path.Combine(libraryPath, "steamapps", "common", "Escape from Tarkov"));
+            foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (Directory.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
+        public GameWatcher(bool historicalReplay = false)
 		{
+			this.historicalReplay = historicalReplay;
 			Monitors = new();
 			raidInfo = new RaidInfo();
             logFileCreateWatcher = new FileSystemWatcher
@@ -238,11 +469,11 @@ namespace TarkovMonitor
                     return;
                 }
                 var raid = raidInfo;
-                if ((raid.Map == null || raid.Map == "") && Properties.Settings.Default.customMap != "")
+                if ((raid.Map == null) && Properties.Settings.Default.customMap != "")
                 {
                     raid = new()
                     {
-                        Map = Properties.Settings.Default.customMap,
+                        Map = TarkovDev.Maps.Find(m => m.nameId == Properties.Settings.Default.customMap),
                     };
                 }
                 if (raid.Map == null)
@@ -290,40 +521,173 @@ namespace TarkovMonitor
             return yaw;
         }
 
-        public void Start()
+        public bool Start()
         {
 			try
 			{
-                logFileCreateWatcher.Path = LogsPath;
-                logFileCreateWatcher.Created += LogFileCreateWatcher_Created;
-				logFileCreateWatcher.EnableRaisingEvents = true;
+                var logsPath = LogsPath;
+                if (_logsPathResolutionFailed || string.IsNullOrWhiteSpace(logsPath))
+                {
+                    return false;
+                }
+                if (!Directory.Exists(logsPath))
+                {
+                    logFileCreateWatcher.EnableRaisingEvents = false;
+                    processTimer.Enabled = false;
+                    ResetLogMonitoring();
+                    ExceptionThrown?.Invoke(this, new ExceptionEventArgs(
+                        new DirectoryNotFoundException($"The configured EFT logs folder does not exist: {logsPath}"),
+                        "starting game watcher"));
+                    return false;
+                }
+
+				ConfigureLogWatcher(logsPath);
+				processTimer.Elapsed -= ProcessTimer_Elapsed;
 				processTimer.Elapsed += ProcessTimer_Elapsed;
 				UpdateProcess();
 				SetupScreenshotWatcher();
 				processTimer.Enabled = true;
-				if (Monitors.Count == 0)
-				{
-					WatchLogsFolder(GetLatestLogFolder());
-				}
+				return true;
 			}
 			catch (Exception ex)
 			{
-                ExceptionThrown?.Invoke(this, new(ex, "starting game watcher"));
+				logFileCreateWatcher.EnableRaisingEvents = false;
+				processTimer.Enabled = false;
+				ResetLogMonitoring();
+				ExceptionThrown?.Invoke(this, new(ex, "starting game watcher"));
+				return false;
 			}
+        }
+
+        private void ConfigureLogWatcher(string logsPath)
+        {
+            if (!Directory.Exists(logsPath))
+            {
+                throw new DirectoryNotFoundException($"The configured EFT logs folder does not exist: {logsPath}");
+            }
+
+            ResetLogMonitoring();
+            logFileCreateWatcher.EnableRaisingEvents = false;
+            logFileCreateWatcher.Path = logsPath;
+            logFileCreateWatcher.Created -= LogFileCreateWatcher_Created;
+            logFileCreateWatcher.Created += LogFileCreateWatcher_Created;
+            logFileCreateWatcher.Error -= LogFileCreateWatcher_Error;
+            logFileCreateWatcher.Error += LogFileCreateWatcher_Error;
+            logFileCreateWatcher.EnableRaisingEvents = true;
+
+            var latestLogFolder = GetLatestLogFolder();
+            if (!string.IsNullOrWhiteSpace(latestLogFolder))
+            {
+                WatchLogsFolder(latestLogFolder);
+            }
+        }
+
+        private void LogFileCreateWatcher_Error(object? sender, ErrorEventArgs e)
+        {
+            var exception = e.GetException() ?? new IOException("The EFT logs watcher reported an unspecified error.");
+            ExceptionThrown?.Invoke(this, new ExceptionEventArgs(exception, "watching EFT logs folder"));
+
+            if (!Directory.Exists(_logsPath))
+            {
+                logFileCreateWatcher.EnableRaisingEvents = false;
+                ResetLogMonitoring();
+                return;
+            }
+
+            RecoverLogWatcher();
+        }
+
+        private void RecoverLogWatcher()
+        {
+            lock (initialReadGate)
+            {
+                if (logWatcherRecoveryInProgress)
+                {
+                    return;
+                }
+                logWatcherRecoveryInProgress = true;
+            }
+
+            try
+            {
+                if (string.IsNullOrWhiteSpace(_logsPath) || !Directory.Exists(_logsPath))
+                {
+                    return;
+                }
+
+                ConfigureLogWatcher(_logsPath);
+            }
+            catch (Exception ex)
+            {
+                ExceptionThrown?.Invoke(this, new ExceptionEventArgs(ex, "recovering EFT logs watcher"));
+            }
+            finally
+            {
+                lock (initialReadGate)
+                {
+                    logWatcherRecoveryInProgress = false;
+                }
+            }
         }
 
         private void LogFileCreateWatcher_Created(object sender, FileSystemEventArgs e)
         {
-            string filename = e.Name ?? "";
-            if (filename.Contains("application.log") || filename.Contains("application_000.log"))
+            try
             {
-                StartNewMonitor(e.FullPath);
+                if (GetLogType(e.FullPath) != null)
+                {
+                    StartNewMonitor(e.FullPath);
+                }
             }
-            if (filename.Contains("notifications.log") || filename.Contains("notifications_000.log"))
+            catch (Exception ex)
             {
-                StartNewMonitor(e.FullPath);
+                ExceptionThrown?.Invoke(this, new ExceptionEventArgs(ex, "starting EFT log monitor"));
             }
         }
+
+        private void ReportUnsupportedSessionMode(string rawSessionMode)
+        {
+            lock (reportedSessionModeFailuresLock)
+            {
+                if (!reportedSessionModeFailures.Add(rawSessionMode))
+                {
+                    return;
+                }
+            }
+
+            var exception = new System.IO.InvalidDataException($"EFT reported an unsupported session mode '{rawSessionMode}'.");
+            ExceptionThrown?.Invoke(this, new ExceptionEventArgs(exception, "parsing session mode"));
+        }
+
+        internal static EftSessionMode ResolveSessionMode(string? rawSessionMode)
+        {
+            if (string.Equals(rawSessionMode, "Pve", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(rawSessionMode, "PVE", StringComparison.OrdinalIgnoreCase))
+            {
+                return EftSessionMode.PVE;
+            }
+            if (string.Equals(rawSessionMode, "Regular", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(rawSessionMode, "PVP", StringComparison.OrdinalIgnoreCase))
+            {
+                return EftSessionMode.Regular;
+            }
+            if (string.Equals(rawSessionMode, "PvpSeason", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(rawSessionMode, "Seasonal", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(rawSessionMode, "SZN", StringComparison.OrdinalIgnoreCase))
+            {
+                return EftSessionMode.Seasonal;
+            }
+
+            return EftSessionMode.Unknown;
+        }
+
+        internal static ProfileType ResolveProfileType(EftSessionMode sessionMode) => sessionMode switch
+        {
+            EftSessionMode.PVE => ProfileType.PVE,
+            EftSessionMode.Seasonal => ProfileType.PvpSeason,
+            EftSessionMode.Regular => ProfileType.Regular,
+            _ => ProfileType.Unknown,
+        };
 
         internal void GameWatcher_NewLogData(object? sender, NewLogDataEventArgs e)
         {
@@ -331,6 +695,22 @@ namespace TarkovMonitor
             {
                 //DebugMessage?.Invoke(this, new DebugEventArgs(e.NewMessage));
                 NewLogData?.Invoke(this, e);
+                if (e.Type == GameLogType.Output)
+                {
+                    string outputData = outputLogTail + e.Data;
+                    if (outputData.Contains(GameStoppingMarker))
+                    {
+                        RaidStopping?.Invoke(this, EventArgs.Empty);
+                    }
+
+                    int tailLength = Math.Min(outputData.Length, GameStoppingMarker.Length - 1);
+                    outputLogTail = outputData[^tailLength..];
+
+                    // output.log repeats messages that are already handled by the
+                    // dedicated application and notification log monitors. It is
+                    // watched only for the earlier GameStopping marker.
+                    return;
+                }
                 //var logPattern = @"(?<message>^\d{4}-\d{2}-\d{2}.+$)\s*(?<json>^{[\s\S]+?^})?";
                 //var logPattern = @"(?<date>^\d{4}-\d{2}-\d{2}) (?<time>\d{2}:\d{2}:\d{2}\.\d{3} [+-]\d{2}:\d{2})\|(?<logLevel>[^|]+)\|(?<logType>[^|]+)\|(?<message>.+$)\s*(?<json>^{[\s\S]+?^})?";
                 var logMessages = Regex.Matches(e.Data, logPattern, RegexOptions.Multiline);
@@ -349,19 +729,42 @@ namespace TarkovMonitor
                     //System.Diagnostics.Debug.WriteLine(eventLine);
                     if (eventLine.Contains("Session mode: "))
                     {
-                        var modeMatch = Regex.Match(eventLine, @"Session mode: (?<mode>\w+)");
+                        var modeMatch = Regex.Match(eventLine, @"Session mode: (?<mode>[^\s|]+)");
                         if (!modeMatch.Success)
                         {
                             continue;
                         }
-                        CurrentProfile.Type = Enum.Parse<ProfileType>(modeMatch.Groups["mode"].Value, true);
-                        raidInfo.Profile = CurrentProfile;
+                        var rawSessionMode = modeMatch.Groups["mode"].Value;
+                        var sessionMode = ResolveSessionMode(rawSessionMode);
+                        if (sessionMode == EftSessionMode.Unknown)
+                        {
+                            CurrentProfile.Id = "";
+                            CurrentProfile.AccountId = "";
+                            CurrentProfile.SessionMode = EftSessionMode.Unknown;
+                            CurrentProfile.Type = ProfileType.Unknown;
+                            raidInfo.Profile = CurrentProfile.Snapshot();
+                            ReportUnsupportedSessionMode(rawSessionMode);
+                            ProfileChanged?.Invoke(this, new(CurrentProfile));
+                            continue;
+                        }
+                        if (CurrentProfile.SessionMode != sessionMode)
+                        {
+                            // EFT reports the mode before the matching profile identity.
+                            // Never let the previous mode's identity cross that boundary.
+                            CurrentProfile.Id = "";
+                            CurrentProfile.AccountId = "";
+                        }
+                        CurrentProfile.SessionMode = sessionMode;
+                        CurrentProfile.Type = ResolveProfileType(sessionMode);
+                        raidInfo.Profile = CurrentProfile.Snapshot();
                         continue;
                     }
-                    // old message was SelectProfile, new is SelectedProfile
-                    if (eventLine.Contains("SelectProfile ProfileId:") || eventLine.Contains("SelectedProfile ProfileId:"))
+                    // Profile selection messages have changed names across EFT versions.
+                    if (eventLine.Contains("SelectProfile ProfileId:")
+                        || eventLine.Contains("SelectedProfile ProfileId:")
+                        || eventLine.Contains("PrepareSelectedProfileLocally ProfileId:"))
                     {
-                        var profileIdMatch = Regex.Match(eventLine, @"Select(?:ed)?Profile ProfileId:(?<profileId>\w+) AccountId:(?<accountId>\d+)");
+                        var profileIdMatch = Regex.Match(eventLine, @"(?:Select(?:ed)?Profile|PrepareSelectedProfileLocally) ProfileId:(?<profileId>\w+) AccountId:(?<accountId>\d+)");
                         if (!profileIdMatch.Success)
                         {
                             continue;
@@ -455,14 +858,15 @@ namespace TarkovMonitor
                         {
                             Profile = CurrentProfile,
                         };
-                        var bundleMatch = Regex.Match(eventLine, @"scene preset path:maps\/(?<mapBundleName>[a-zA-Z0-9_]+)\.bundle");
-                        if (bundleMatch.Success)
+                        matchingStatusPublished = false;
+                        var scenePathMatch = Regex.Match(eventLine, @"scene preset path:(?<scenePath>maps\/[a-zA-Z0-9_]+\.bundle)");
+                        if (scenePathMatch.Success)
                         {
-                            var mapBundle = bundleMatch.Groups["mapBundleName"].Value;
-                            if (MapBundles.ContainsKey(mapBundle))
+                            var scenePath = scenePathMatch.Groups["scenePath"].Value;
+                            var map = TarkovDev.Maps.Find((map) => map.scenePath == scenePath);
+                            if (map != null)
                             {
-                                string mapId = MapBundles[mapBundle];
-                                raidInfo.Map = mapId;
+                                raidInfo.Map = map;
                                 MapLoading?.Invoke(this, new(raidInfo, CurrentProfile));
                             }
                         }
@@ -471,7 +875,7 @@ namespace TarkovMonitor
                     {
                         // The map has been loaded and the game is searching for a match
                         raidInfo.MapLoadTime = float.Parse(Regex.Match(eventLine, @"LocationLoaded:[0-9.,]+ real:(?<loadTime>[0-9.,]+)").Groups["loadTime"].Value.Replace(",", "."), CultureInfo.InvariantCulture);
-						//MatchingStarted?.Invoke(this, new(raidInfo, CurrentProfile));
+                        PublishMatchingStarted(e.InitialRead);
 					}
 					if (eventLine.Contains("application|MatchingCompleted"))
 					{
@@ -486,8 +890,9 @@ namespace TarkovMonitor
                     {
                         // Immediately after matching is complete
                         // Sufficient information is available to raise the MatchFound event
-                        var mapUnknown = raidInfo.Map == "" || raidInfo.Map == null;
-                        raidInfo.Map = Regex.Match(eventLine, "Location: (?<map>[^,]+)").Groups["map"].Value;
+                        var mapUnknown = raidInfo.Map == null;
+                        var mapNameId = Regex.Match(eventLine, "Location: (?<map>[^,]+)").Groups["map"].Value;
+                        raidInfo.Map = TarkovDev.Maps.Find(map => map.nameId == mapNameId);
                         raidInfo.Online = eventLine.Contains("RaidMode: Online");
                         raidInfo.RaidId = Regex.Match(eventLine, @"shortId: (?<raidId>[A-Z0-9]{6})").Groups["raidId"].Value;
                         if (Raids.ContainsKey(raidInfo.RaidId)) {
@@ -501,6 +906,7 @@ namespace TarkovMonitor
                         if (!raidInfo.Reconnected && raidInfo.Online && raidInfo.QueueTime > 0)
                         {
                             // Raise the MatchFound event only if we queued; not if we are re-loading back into a raid
+                            PublishMatchingStarted(e.InitialRead, allowCompletedFallback: true);
                             MatchFound?.Invoke(this, new(raidInfo, CurrentProfile));
                         }
                         if (mapUnknown)
@@ -533,6 +939,7 @@ namespace TarkovMonitor
                     {
                         // User cancelled matching
                         MatchingAborted?.Invoke(this, new(raidInfo, CurrentProfile));
+                        matchingStatusPublished = false;
                         raidInfo = new()
                         {
                             Profile = CurrentProfile,
@@ -581,18 +988,18 @@ namespace TarkovMonitor
                         if (systemMessageEvent.message.type >= MessageType.TaskStarted && systemMessageEvent.message.type <= MessageType.TaskFinished)
                         {
                             var args = jsonNode?.AsObject().Deserialize<TaskStatusMessageLogContent>() ?? throw new Exception("Error parsing TaskStatusMessageLogContent");
-                            TaskModified?.Invoke(this, new LogContentEventArgs<TaskStatusMessageLogContent>() { LogContent = args, Profile = CurrentProfile });
+                            TaskModified?.Invoke(this, new LogContentEventArgs<TaskStatusMessageLogContent>() { LogContent = args, Profile = ActiveProfile });
                             if (args.Status == TaskStatus.Started)
                             {
-                                TaskStarted?.Invoke(this, new LogContentEventArgs<TaskStatusMessageLogContent>() { LogContent = args, Profile = CurrentProfile });
+                                TaskStarted?.Invoke(this, new LogContentEventArgs<TaskStatusMessageLogContent>() { LogContent = args, Profile = ActiveProfile });
                             }
                             if (args.Status == TaskStatus.Failed)
                             {
-                                TaskFailed?.Invoke(this, new LogContentEventArgs<TaskStatusMessageLogContent>() { LogContent = args, Profile = CurrentProfile });
+                                TaskFailed?.Invoke(this, new LogContentEventArgs<TaskStatusMessageLogContent>() { LogContent = args, Profile = ActiveProfile });
                             }
                             if (args.Status == TaskStatus.Finished)
                             {
-                                TaskFinished?.Invoke(this, new LogContentEventArgs<TaskStatusMessageLogContent>() { LogContent = args, Profile = CurrentProfile });
+                                TaskFinished?.Invoke(this, new LogContentEventArgs<TaskStatusMessageLogContent>() { LogContent = args, Profile = ActiveProfile });
                             }
                         }
                     }
@@ -600,7 +1007,7 @@ namespace TarkovMonitor
             }
             catch (Exception ex)
             {
-                ExceptionThrown?.Invoke(this, new ExceptionEventArgs(ex, $"parsing {e.Type} log data {e.Data}"));
+                ExceptionThrown?.Invoke(this, new ExceptionEventArgs(ex, $"parsing {e.Type} log data"));
             }
         }
 
@@ -609,10 +1016,11 @@ namespace TarkovMonitor
             if (eventLine.Contains("application|scene preset path:"))
             {
                 raidInfo = new RaidInfo { Profile = CurrentProfile };
-                var bundleMatch = Regex.Match(eventLine, @"scene preset path:maps\/(?<mapBundleName>[a-zA-Z0-9_]+)\.bundle");
-                if (bundleMatch.Success && MapBundles.TryGetValue(bundleMatch.Groups["mapBundleName"].Value, out var mapId))
+                var scenePathMatch = Regex.Match(eventLine, @"scene preset path:(?<scenePath>maps\/[a-zA-Z0-9_]+\.bundle)");
+                if (scenePathMatch.Success)
                 {
-                    raidInfo.Map = mapId;
+                    var scenePath = scenePathMatch.Groups["scenePath"].Value;
+                    raidInfo.Map = TarkovDev.Maps.Find(map => map.scenePath == scenePath);
                 }
                 return;
             }
@@ -622,7 +1030,8 @@ namespace TarkovMonitor
                 var mapMatch = Regex.Match(eventLine, "Location: (?<map>[^,]+)");
                 if (mapMatch.Success)
                 {
-                    raidInfo.Map = mapMatch.Groups["map"].Value;
+                    var mapNameId = mapMatch.Groups["map"].Value;
+                    raidInfo.Map = TarkovDev.Maps.Find(map => map.nameId == mapNameId);
                 }
                 raidInfo.Online = eventLine.Contains("RaidMode: Online");
                 raidInfo.RaidId = Regex.Match(eventLine, @"shortId: (?<raidId>[A-Z0-9]{6})").Groups["raidId"].Value;
@@ -657,7 +1066,7 @@ namespace TarkovMonitor
         public Dictionary<DateTime, string> GetLogFolders()
         {
 			Dictionary<DateTime, string> folderDictionary = new();
-            if (LogsPath == "")
+            if (string.IsNullOrWhiteSpace(LogsPath) || !Directory.Exists(LogsPath))
             {
                 return folderDictionary;
 			}
@@ -678,10 +1087,12 @@ namespace TarkovMonitor
         // Process the log files in the specified folder
         public void ProcessLogs(LogDetails target, List<LogDetails> profiles)
         {
+            profiles = profiles.OrderBy(profile => profile.Date).ToList();
             for (var i = 0; i < profiles.Count; i++)
             {
                 var logProfile = profiles[i];
-                if (logProfile.Profile.Id != target.Profile.Id)
+                if (logProfile.Profile.Id != target.Profile.Id
+                    || logProfile.Profile.SessionMode != target.Profile.SessionMode)
                 {
                     continue;
                 }
@@ -690,30 +1101,19 @@ namespace TarkovMonitor
                 {
                     endDate = profiles[i + 1].Date;
                 }
+                var startDate = logProfile.Date > target.Date ? logProfile.Date : target.Date;
+                if (endDate <= startDate)
+                {
+                    continue;
+                }
+                parsingProfile = logProfile.Profile.Snapshot();
                 var logFiles = Directory.GetFiles(logProfile.Folder);
-                // TODO: This could be improved by processing lines in the order they were created
-                // rather than a full file at a time, this could be valuable for future features
+                var replayEntries = new List<(DateTime Date, string Data)>();
                 foreach (string logFile in logFiles)
                 {
-                    GameLogType logType;
-                    // Check which type of log file this is by the filename
-                    if (logFile.Contains("application.log") || logFile.Contains("application_000.log"))
+                    if (!logFile.Contains("notifications.log")
+                        && !logFile.Contains("notifications_000.log"))
                     {
-                        logType = GameLogType.Application;
-                    }
-                    else if (logFile.Contains("notifications.log") || logFile.Contains("notifications_000.log"))
-                    {
-                        logType = GameLogType.Notifications;
-                    }
-                    else if (logFile.Contains("traces.log") || logFile.Contains("traces_000.log"))
-                    {
-                        // logType = GameLogType.Traces;
-                        // Traces are not currently used, so skip them
-                        continue;
-                    }
-                    else
-                    {
-                        // We're not a known log type, so skip this file
                         continue;
                     }
 
@@ -729,13 +1129,21 @@ namespace TarkovMonitor
                         var dateTimeString = match.Groups["date"].Value + " " + match.Groups["time"].Value;
                         DateTime logMessageDate = DateTime.ParseExact(dateTimeString, "yyyy-MM-dd HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture);
 
-                        if (logMessageDate < logProfile.Date || logMessageDate >= endDate)
+                        if (logMessageDate < startDate || logMessageDate >= endDate)
                         {
                             continue;
                         }
 
-                        GameWatcher_NewLogData(this, new NewLogDataEventArgs { Type = logType, Data = match.Value });
+                        replayEntries.Add((logMessageDate, match.Value));
                     }
+                }
+                foreach (var replayEntry in replayEntries.OrderBy(entry => entry.Date))
+                {
+                    GameWatcher_NewLogData(this, new NewLogDataEventArgs
+                    {
+                        Type = GameLogType.Notifications,
+                        Data = replayEntry.Data,
+                    });
                 }
             }
         }
@@ -763,25 +1171,41 @@ namespace TarkovMonitor
             using var fileStream = new FileStream(appLogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var textReader = new StreamReader(fileStream, Encoding.UTF8);
             var applicationLog = textReader.ReadToEnd();
-            var matches = Regex.Matches(applicationLog, @$"{logPatternPrefix}(?<version>\d+\.\d+\.\d+\.\d+)\.\d+\|(?<logLevel>[^|]+)\|(?<logType>[^|]+)\|(?:SelectProfile|CompleteSelectedProfile) ProfileId:(?<profileId>[a-f0-9]+) AccountId:(?<accountId>\d+)", RegexOptions.Multiline);
+            var matches = Regex.Matches(applicationLog, @$"{logPatternPrefix}(?<version>\d+\.\d+\.\d+\.\d+)\.\d+\|(?<logLevel>[^|]+)\|(?<logType>[^|]+)\|(?:Select(?:ed)?Profile|PrepareSelectedProfileLocally|CompleteSelectedProfile) ProfileId:(?<profileId>[a-f0-9]+) AccountId:(?<accountId>\d+)", RegexOptions.Multiline);
             if (matches.Count == 0)
             {
                 return logDetails;
             }
-            var profileTypeMatches = Regex.Matches(applicationLog, @$"{logPatternPrefix}(?<version>\d+\.\d+\.\d+\.\d+)\.\d+\|(?<logLevel>[^|]+)\|(?<logType>[^|]+)\|Session mode: (?<profileType>\w+)", RegexOptions.Multiline);
+            var profileTypeMatches = Regex.Matches(applicationLog, @$"{logPatternPrefix}(?<version>\d+\.\d+\.\d+\.\d+)\.\d+\|(?<logLevel>[^|]+)\|(?<logType>[^|]+)\|Session mode: (?<profileType>[^\s|]+)", RegexOptions.Multiline);
             for (var i = 0; i < matches.Count; i++)
             {
                 Match match = matches[i];
                 var dateTimeString = match.Groups["date"].Value + " " + match.Groups["time"].Value;
                 DateTime profileDate = DateTime.ParseExact(dateTimeString, "yyyy-MM-dd HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture);
-                ProfileType profileType = ProfileType.Regular;
-                if (matches.Count == profileTypeMatches.Count)
+                var sessionMode = EftSessionMode.Unknown;
+                Match? sessionModeMatch = null;
+                foreach (Match candidate in profileTypeMatches)
                 {
-                    profileType = Enum.Parse<ProfileType>(profileTypeMatches[i].Groups["profileType"].Value, true);
+                    if (candidate.Index > match.Index)
+                    {
+                        break;
+                    }
+                    sessionModeMatch = candidate;
                 }
+                if (sessionModeMatch != null)
+                {
+                    sessionMode = ResolveSessionMode(sessionModeMatch.Groups["profileType"].Value);
+                }
+                var profileType = ResolveProfileType(sessionMode);
                 logDetails.Add(new LogDetails()
                 {
-                    Profile = new() { Id = match.Groups["profileId"].Value, Type = profileType },
+                    Profile = new()
+                    {
+                        Id = match.Groups["profileId"].Value,
+                        Type = ResolveProfileType(sessionMode),
+                        SessionMode = sessionMode,
+                        AccountId = match.Groups["accountId"].Value,
+                    },
                     AccountId = Int32.Parse(match.Groups["accountId"].Value),
                     Date = profileDate,
                     Version = new Version(match.Groups["version"].Value),
@@ -791,34 +1215,74 @@ namespace TarkovMonitor
             return logDetails;
         }
 
-        public List<LogDetails> GetLogBreakpoints(string profileId)
+        public List<DiscoveredEftProfile> DiscoverProfiles()
+        {
+            var observations = GetLogFolders()
+                .Values
+                .SelectMany(GetLogDetails)
+                .Select(details =>
+                {
+                    var sessionMode = details.Profile.SessionMode;
+                    return new DiscoveredEftProfile
+                    {
+                        Profile = new Profile
+                        {
+                            AccountId = details.AccountId.ToString(CultureInfo.InvariantCulture),
+                            Id = details.Profile.Id,
+                            SessionMode = sessionMode,
+                            Type = ResolveProfileType(sessionMode),
+                        },
+                        FirstSeenUtc = new DateTimeOffset(details.Date).ToUniversalTime(),
+                        LastSeenUtc = new DateTimeOffset(details.Date).ToUniversalTime(),
+                    };
+                })
+                .Where(observation => observation.Profile.HasIdentity
+                    && observation.Profile.SupportsTarkovTrackerWrites)
+                .ToList();
+
+            return observations
+                .GroupBy(observation => new
+                {
+                    observation.Profile.AccountId,
+                    observation.Profile.Id,
+                    observation.Profile.SessionMode,
+                })
+                .Select(group => new DiscoveredEftProfile
+                {
+                    Profile = group.First().Profile.Snapshot(),
+                    FirstSeenUtc = group.Min(observation => observation.FirstSeenUtc),
+                    LastSeenUtc = group.Max(observation => observation.LastSeenUtc),
+                })
+                .OrderByDescending(observation => observation.LastSeenUtc)
+                .ToList();
+        }
+
+        public List<LogDetails> GetLogBreakpoints()
         {
             List<LogDetails> breakpoints = new();
-            if (profileId == "")
-            {
-                return breakpoints;
-            }
             foreach (var kvp in GetLogFolders().OrderBy(key => key.Key).ToDictionary(x => x.Key, x => x.Value))
             {
                 List<LogDetails> folderBreakpoints = GetLogDetails(kvp.Value);
                 foreach(var breakpoint in folderBreakpoints)
                 {
-                    if (breakpoint.Profile.Id != profileId)
-                    {
-                        continue;
-                    }
-                    var matchingBreakpoint = breakpoints.Where((bp) => bp.Version == breakpoint.Version && bp.Profile.Id == breakpoint.Profile.Id).FirstOrDefault();
+                    var matchingBreakpoint = breakpoints.Where((bp) => bp.Version == breakpoint.Version
+                        && bp.Profile.Id == breakpoint.Profile.Id
+                        && bp.Profile.SessionMode == breakpoint.Profile.SessionMode).FirstOrDefault();
                     if (matchingBreakpoint == null)
                     {
                         breakpoints.Add(breakpoint);
                     }
                 }
             }
-            return breakpoints;
+            return breakpoints.OrderBy(breakpoint => breakpoint.Date).ToList();
         }
 
         public void ProcessLogsFromBreakpoint(LogDetails breakpoint)
         {
+            if (!historicalReplay)
+            {
+                throw new InvalidOperationException("Past logs must be processed by an isolated historical watcher.");
+            }
             List<List<LogDetails>> logDetails = new();
             var logFolders = Directory.GetDirectories(LogsPath);
             // For each log folder, get the details
@@ -829,7 +1293,8 @@ namespace TarkovMonitor
                 {
                     continue;
                 }
-                if (!details.Any(d => d.Profile.Id == breakpoint.Profile.Id))
+                if (!details.Any(d => d.Profile.Id == breakpoint.Profile.Id
+                    && d.Profile.SessionMode == breakpoint.Profile.SessionMode))
                 {
                     continue;
                 }
@@ -858,6 +1323,9 @@ namespace TarkovMonitor
                     }
                     //DebugMessage?.Invoke(this, new DebugEventArgs("EFT exited."));
                     process = null;
+                    CurrentProfile = new();
+                    raidInfo = new();
+                    GameStopped?.Invoke(this, EventArgs.Empty);
                 }
                 raidInfo = new();
                 var processes = Process.GetProcessesByName("EscapeFromTarkov");
@@ -878,7 +1346,17 @@ namespace TarkovMonitor
 
         private string GetLatestLogFolder()
         {
+            if (!Directory.Exists(LogsPath))
+            {
+                return "";
+            }
+
             var logFolders = System.IO.Directory.GetDirectories(LogsPath);
+            if (logFolders.Length == 0)
+            {
+                return "";
+            }
+
             var latestDate = new DateTime(0);
             var latestLogFolder = logFolders.Last();
             foreach (var logFolder in logFolders)
@@ -900,80 +1378,195 @@ namespace TarkovMonitor
             return latestLogFolder ?? "";
         }
 
+        private void PublishMatchingStarted(bool initialRead, bool allowCompletedFallback = false)
+        {
+            if (!MatchingNotificationPolicy.ShouldPublish(
+                    initialRead,
+                    ReadingPastLogs,
+                    matchingStatusPublished,
+                    raidInfo.MapLoadTime,
+                    raidInfo.QueueTime,
+                    raidInfo.StartingTime,
+                    allowCompletedFallback))
+            {
+                return;
+            }
+
+            matchingStatusPublished = true;
+            MatchingStarted?.Invoke(this, new(raidInfo, CurrentProfile));
+        }
+
         private void WatchLogsFolder(string folderPath)
         {
+            if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
+            {
+                return;
+            }
+
             var files = System.IO.Directory.GetFiles(folderPath);
-            var monitorsStarted = 0;
-            var monitorsCompletedInitialRead = 0;
-            List<string> monitoringLogs = new() { "notifications.log", "application.log", "notifications_000.log", "application_000.log" };
             foreach (var file in files)
             {
-                foreach (var logType in monitoringLogs)
+                if (GetLogType(file) != null)
                 {
-                    monitorsStarted++;
-                    if (!file.Contains(logType))
-                    {
-                        monitorsCompletedInitialRead++;
-                        continue;
-                    }
-                    var monitor = StartNewMonitor(file);
-                    if (monitor == null || InitialLogsRead)
-                    {
-                        monitorsCompletedInitialRead++;
-                        break;
-                    }
-                    monitor.InitialReadComplete += (object? sender, EventArgs e) => {
-                        monitorsCompletedInitialRead++;
-                        if (monitorsCompletedInitialRead == monitorsStarted)
-                        {
-                            InitialLogsRead = true;
-                            InitialReadComplete?.Invoke(this, new(CurrentProfile));
-                        }
-                    };
-                    break;
+                    StartNewMonitor(file);
                 }
             }
         }
 
         private LogMonitor? StartNewMonitor(string path)
         {
-            GameLogType? newType = null;
-            if (path.Contains("application.log") || path.Contains("application_000.log"))
-            {
-                newType = GameLogType.Application;
-                CurrentProfile = new();
-            }
-            if (path.Contains("notifications.log") || path.Contains("notifications_000.log"))
-            {
-                newType = GameLogType.Notifications;
-            }
-            if (path.Contains("traces.log") || path.Contains("traces_000.log"))
-            {
-                newType = GameLogType.Traces;
-            }
+            var newType = GetLogType(path);
             if (newType == null)
             {
                 return null;
             }
-            //Debug.WriteLine($"Starting new {newType} monitor at {path}");
-            if (Monitors.ContainsKey((GameLogType)newType))
+
+            if (newType == GameLogType.Application)
             {
-                Monitors[(GameLogType)newType].Stop();
+                CurrentProfile = new();
             }
-            var newMon = new LogMonitor(path, (GameLogType)newType);
+            if (newType == GameLogType.Output)
+            {
+                outputLogTail = "";
+            }
+            //Debug.WriteLine($"Starting new {newType} monitor at {path}");
+            var newMon = new LogMonitor(path, newType.Value);
             newMon.NewLogData += GameWatcher_NewLogData;
             newMon.Exception += (sender, e) => {
                 ExceptionThrown?.Invoke(sender, e);
             };
-            newMon.Start();
-            Monitors[(GameLogType)newType] = newMon;
+            LogMonitor? existingMonitor;
+            lock (monitorsGate)
+            {
+                Monitors.TryGetValue(newType.Value, out existingMonitor);
+                if (existingMonitor != null)
+                {
+                    existingMonitor.InitialReadComplete -= LogMonitor_InitialReadComplete;
+                    lock (initialReadGate)
+                    {
+                        pendingInitialReads.Remove(existingMonitor);
+                    }
+                }
+
+                if (!InitialLogsRead)
+                {
+                    lock (initialReadGate)
+                    {
+                        pendingInitialReads.Add(newMon);
+                        if (newMon.Type == GameLogType.Application)
+                        {
+                            applicationInitialReadComplete = false;
+                        }
+                    }
+                }
+                // Every replacement application log must produce a profile-ready
+                // transition, even after the original startup read completed.
+                newMon.InitialReadComplete += LogMonitor_InitialReadComplete;
+                Monitors[newType.Value] = newMon;
+                newMon.Start();
+            }
+            existingMonitor?.Stop();
             return newMon;
+        }
+
+        private static GameLogType? GetLogType(string path)
+        {
+            var filename = Path.GetFileName(path);
+            if (filename.EndsWith("application.log", StringComparison.OrdinalIgnoreCase)
+                || filename.EndsWith("application_000.log", StringComparison.OrdinalIgnoreCase))
+            {
+                return GameLogType.Application;
+            }
+            if (filename.EndsWith("notifications.log", StringComparison.OrdinalIgnoreCase)
+                || filename.EndsWith("notifications_000.log", StringComparison.OrdinalIgnoreCase))
+            {
+                return GameLogType.Notifications;
+            }
+            if (filename.EndsWith("output.log", StringComparison.OrdinalIgnoreCase)
+                || filename.EndsWith("output_000.log", StringComparison.OrdinalIgnoreCase))
+            {
+                return GameLogType.Output;
+            }
+            if (filename.EndsWith("traces.log", StringComparison.OrdinalIgnoreCase)
+                || filename.EndsWith("traces_000.log", StringComparison.OrdinalIgnoreCase))
+            {
+                return GameLogType.Traces;
+            }
+            return null;
+        }
+
+        private void LogMonitor_InitialReadComplete(object? sender, EventArgs e)
+        {
+            if (sender is not LogMonitor monitor)
+            {
+                return;
+            }
+
+            var shouldPublish = false;
+            var shouldPublishProfileReady = false;
+            lock (initialReadGate)
+            {
+                var wasPendingInitialRead = pendingInitialReads.Remove(monitor);
+                if (!wasPendingInitialRead
+                    && (!InitialLogsRead || monitor.Type != GameLogType.Application))
+                {
+                    return;
+                }
+
+                if (monitor.Type == GameLogType.Application)
+                {
+                    applicationInitialReadComplete = true;
+                }
+
+                if (InitialLogsRead && monitor.Type == GameLogType.Application)
+                {
+                    shouldPublishProfileReady = true;
+                }
+                else if (!InitialLogsRead && applicationInitialReadComplete && pendingInitialReads.Count == 0)
+                {
+                    InitialLogsRead = true;
+                    shouldPublish = true;
+                }
+            }
+
+            if (shouldPublishProfileReady)
+            {
+                ProfileReady?.Invoke(this, new(CurrentProfile));
+            }
+            else if (shouldPublish)
+            {
+                PublishMatchingStarted(false);
+                InitialReadComplete?.Invoke(this, new(CurrentProfile));
+            }
+        }
+
+        private void ResetLogMonitoring()
+        {
+            List<LogMonitor> monitors;
+            lock (monitorsGate)
+            {
+                monitors = Monitors.Values.Distinct().ToList();
+                Monitors.Clear();
+                lock (initialReadGate)
+                {
+                    pendingInitialReads.Clear();
+                    applicationInitialReadComplete = false;
+                    InitialLogsRead = false;
+                }
+            }
+
+            foreach (var monitor in monitors)
+            {
+                monitor.InitialReadComplete -= LogMonitor_InitialReadComplete;
+                monitor.Stop();
+            }
         }
 	}
 	public enum GameLogType
 	{
 		Application,
 		Notifications,
+		Output,
 		Traces
 	}
     public enum MessageType
@@ -1008,7 +1601,7 @@ namespace TarkovMonitor
     }
     public class RaidInfo
     {
-        public string Map { get; set; }
+        public TarkovDev.Map Map { get; set; }
         public string RaidId { get; set; }
         public bool Online { get; set; }
         public float MapLoadTime { get; set; }
@@ -1045,7 +1638,7 @@ namespace TarkovMonitor
         public List<string> Screenshots { get; set; } = new();
         public RaidInfo()
         {
-            Map = "";
+            Map = null;
             Online = false;
             RaidId = "";
             MapLoadTime = 0;
@@ -1084,17 +1677,21 @@ namespace TarkovMonitor
         public RaidInfoEventArgs(RaidInfo raidInfo, Profile profile)
         {
             RaidInfo = raidInfo;
-            Profile = profile;
+            Profile = profile.Snapshot();
         }
     }
 	public class ExceptionEventArgs : EventArgs
 	{
 		public Exception Exception { get; set; }
         public string Context { get; set; }
-		public ExceptionEventArgs(Exception ex, string context)
+		public string? Endpoint { get; set; }
+        public long? DurationMilliseconds { get; set; }
+		public ExceptionEventArgs(Exception ex, string context, string? endpoint = null, long? durationMilliseconds = null)
 		{
 			this.Exception = ex;
             Context = context;
+			Endpoint = endpoint;
+            DurationMilliseconds = durationMilliseconds;
 		}
 	}
 	public class DebugEventArgs : EventArgs
@@ -1127,17 +1724,84 @@ namespace TarkovMonitor
         public string Folder { get; set; }
     }
 
+    public sealed class DiscoveredEftProfile
+    {
+        public Profile Profile { get; set; } = new();
+        public DateTimeOffset FirstSeenUtc { get; set; }
+        public DateTimeOffset LastSeenUtc { get; set; }
+    }
+
     public enum ProfileType
     {
         PVE,
         Regular,
+        PvpSeason,
+        Unknown,
+    }
+
+    public static class ProfileTypeExtensions
+    {
+        public static string ToApiString(this ProfileType profileType) => profileType switch
+        {
+            ProfileType.PvpSeason => "pvp-season",
+            ProfileType.Unknown => "unknown",
+            _ => profileType.ToString().ToLower(),
+        };
+        public static string ToPlayersApiString(this ProfileType profileType) => profileType switch
+        {
+            ProfileType.PvpSeason => "pvp-season",
+            ProfileType.Regular => "profile",
+            ProfileType.Unknown => "unknown",
+            _ => profileType.ToString().ToLower(),
+        };
+    }
+
+    public enum EftSessionMode
+    {
+        Unknown,
+        PVE,
+        Regular,
+        Seasonal,
     }
 
     public class Profile
     {
         public string Id { get; set; } = "";
         public ProfileType Type { get; set; } = ProfileType.Regular;
+        public EftSessionMode SessionMode { get; set; } = EftSessionMode.Unknown;
         public string AccountId { get; set; } = "";
+        public string DisplayName => SessionMode switch
+        {
+            EftSessionMode.PVE => "PVE",
+            EftSessionMode.Regular => "Regular (PVP)",
+            EftSessionMode.Seasonal => "Seasonal",
+            _ => "Unknown",
+        };
+        public string TarkovDevPlayerMode => SessionMode switch
+        {
+            EftSessionMode.PVE => "pve",
+            EftSessionMode.Regular => "pvp",
+            EftSessionMode.Seasonal => "pvp-season",
+            _ => "",
+        };
+        public bool HasTarkovDevPlayerRoute => HasIdentity
+            && !string.IsNullOrWhiteSpace(TarkovDevPlayerMode);
+        public bool SupportsTarkovTrackerWrites => SessionMode is EftSessionMode.PVE
+            or EftSessionMode.Regular
+            or EftSessionMode.Seasonal;
+        public bool HasIdentity => !string.IsNullOrWhiteSpace(AccountId)
+            && !string.IsNullOrWhiteSpace(Id);
+
+        public Profile Snapshot()
+        {
+            return new Profile
+            {
+                Id = Id,
+                Type = Type,
+                SessionMode = SessionMode,
+                AccountId = AccountId,
+            };
+        }
     }
 
     public class ProfileEventArgs : EventArgs
@@ -1145,14 +1809,19 @@ namespace TarkovMonitor
         public Profile Profile { get; set; }
         public ProfileEventArgs(Profile profile)
         {
-            Profile = profile;
+            Profile = profile.Snapshot();
         }
     }
 
     public class LogContentEventArgs<T> : EventArgs where T : JsonLogContent
     {
         public T LogContent { get; set; }
-        public Profile Profile { get; set; }
+        private Profile profile = new();
+        public Profile Profile
+        {
+            get => profile;
+            set => profile = value.Snapshot();
+        }
 
     }
 

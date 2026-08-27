@@ -68,6 +68,18 @@
     <Setting Name="tarkovTrackerTokens" Type="System.String" Scope="User">
       <Value Profile="(Default)">{}</Value>
     </Setting>
+    <Setting Name="tarkovTrackerModeTokens" Type="System.String" Scope="User">
+      <Value Profile="(Default)">{}</Value>
+    </Setting>
+    <Setting Name="tarkovTrackerVerifiedModeTokenHashes" Type="System.String" Scope="User">
+      <Value Profile="(Default)">{}</Value>
+    </Setting>
+    <Setting Name="tarkovTrackerOrgTokenStore" Type="System.String" Scope="User">
+      <Value Profile="(Default)">{"version":6,"keys":[],"accounts":[],"profiles":[]}</Value>
+    </Setting>
+    <Setting Name="lastTarkovSessionMode" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
     <Setting Name="runthroughTime" Type="System.TimeSpan" Scope="User">
       <Value Profile="(Default)">00:07:10</Value>
     </Setting>
@@ -79,6 +91,18 @@
     </Setting>
     <Setting Name="language" Type="System.String" Scope="User">
       <Value Profile="(Default)">en</Value>
+    </Setting>
+    <Setting Name="pauseMediaOnRaid" Type="System.Boolean" Scope="User">
+      <Value Profile="(Default)">False</Value>
+    </Setting>
+    <Setting Name="floatingTimerPanelEnabled" Type="System.Boolean" Scope="User">
+      <Value Profile="(Default)">True</Value>
+    </Setting>
+    <Setting Name="floatingTimerPanelShowTimeInRaid" Type="System.Boolean" Scope="User">
+      <Value Profile="(Default)">True</Value>
+    </Setting>
+    <Setting Name="floatingTimerPanelShowRunThrough" Type="System.Boolean" Scope="User">
+      <Value Profile="(Default)">True</Value>
     </Setting>
   </Settings>
 </SettingsFile>

@@ -286,6 +286,54 @@ namespace TarkovMonitor.Properties {
                 this["tarkovTrackerTokens"] = value;
             }
         }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("{}")]
+        public string tarkovTrackerModeTokens {
+            get {
+                return ((string)(this["tarkovTrackerModeTokens"]));
+            }
+            set {
+                this["tarkovTrackerModeTokens"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("{}")]
+        public string tarkovTrackerVerifiedModeTokenHashes {
+            get {
+                return ((string)(this["tarkovTrackerVerifiedModeTokenHashes"]));
+            }
+            set {
+                this["tarkovTrackerVerifiedModeTokenHashes"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("{\"version\":6,\"keys\":[],\"accounts\":[],\"profiles\":[]}")]
+        public string tarkovTrackerOrgTokenStore {
+            get {
+                return ((string)(this["tarkovTrackerOrgTokenStore"]));
+            }
+            set {
+                this["tarkovTrackerOrgTokenStore"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string lastTarkovSessionMode {
+            get {
+                return ((string)(this["lastTarkovSessionMode"]));
+            }
+            set {
+                this["lastTarkovSessionMode"] = value;
+            }
+        }
         
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
@@ -332,6 +380,54 @@ namespace TarkovMonitor.Properties {
             }
             set {
                 this["language"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("False")]
+        public bool pauseMediaOnRaid {
+            get {
+                return ((bool)(this["pauseMediaOnRaid"]));
+            }
+            set {
+                this["pauseMediaOnRaid"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("True")]
+        public bool floatingTimerPanelEnabled {
+            get {
+                return ((bool)(this["floatingTimerPanelEnabled"]));
+            }
+            set {
+                this["floatingTimerPanelEnabled"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("True")]
+        public bool floatingTimerPanelShowTimeInRaid {
+            get {
+                return ((bool)(this["floatingTimerPanelShowTimeInRaid"]));
+            }
+            set {
+                this["floatingTimerPanelShowTimeInRaid"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("True")]
+        public bool floatingTimerPanelShowRunThrough {
+            get {
+                return ((bool)(this["floatingTimerPanelShowRunThrough"]));
+            }
+            set {
+                this["floatingTimerPanelShowRunThrough"] = value;
             }
         }
     }

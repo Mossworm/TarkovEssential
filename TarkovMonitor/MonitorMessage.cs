@@ -1,20 +1,102 @@
 ﻿using MudBlazor;
-using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Timers;
 
 namespace TarkovMonitor
 {
+    public sealed class MonitorMessageCollection<T>
+    {
+        private readonly object syncRoot = new();
+        private readonly List<T> items = new();
+        public event NotifyCollectionChangedEventHandler? CollectionChanged;
+
+        public int Count
+        {
+            get
+            {
+                lock (syncRoot)
+                {
+                    return items.Count;
+                }
+            }
+        }
+
+        public IReadOnlyList<T> GetSnapshot()
+        {
+            lock (syncRoot)
+            {
+                return items.ToList();
+            }
+        }
+
+        public void Add(T item)
+        {
+            lock (syncRoot)
+            {
+                var index = items.Count;
+                items.Add(item);
+                CollectionChanged?.Invoke(
+                    this,
+                    new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Add, item, index));
+            }
+        }
+
+        public bool Remove(T item)
+        {
+            lock (syncRoot)
+            {
+                var index = items.IndexOf(item);
+                if (index < 0)
+                {
+                    return false;
+                }
+
+                var removedItem = items[index];
+                items.RemoveAt(index);
+                CollectionChanged?.Invoke(
+                    this,
+                    new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Remove, removedItem, index));
+                return true;
+            }
+        }
+
+        public void Clear()
+        {
+            lock (syncRoot)
+            {
+                if (items.Count == 0)
+                {
+                    return;
+                }
+
+                var removedItems = items.ToList();
+                items.Clear();
+                CollectionChanged?.Invoke(
+                    this,
+                    new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Remove, removedItems, 0));
+            }
+        }
+    }
+
+    public readonly record struct MonitorMessageActionResult(bool Succeeded, string Message);
+
     public class MonitorMessage
     {
+        internal Guid? DisplayBatchId { get; set; }
+        internal bool PreserveDisplayBatchOrder { get; set; }
         public string Message { get; set; }
         public DateTime Time { get; set; } = DateTime.Now;
         public string Type { get; set; } = "";
         public string Url { get; set; } = "";
+        public string? DiagnosticText { get; set; }
+        public string? DiagnosticKey { get; set; }
+        public int DiagnosticOccurrenceCount { get; set; } = 1;
+        public string LinkText { get; set; } = "";
         public Action? OnClick { get; set; } = null;
-        public ObservableCollection<MonitorMessageButton> Buttons { get; set; } = new();
-        public ObservableCollection<MonitorMessageSelect> Selects { get; set; } = new();
+        public MonitorMessageCollection<MonitorMessageButton> Buttons { get; } = new();
+        public MonitorMessageCollection<MonitorMessageSelect> Selects { get; } = new();
+        public List<MonitorMessageProtectedValue> ProtectedValues { get; } = new();
         public MonitorMessage(string message)
         {
             Message = message;
@@ -43,15 +125,18 @@ namespace TarkovMonitor
                 }
             };
         }
-        public MonitorMessage(string message, string? type = "", string? url = "") : this(message)
+        public MonitorMessage(string message, string? type = "", string? url = "", string? linkText = "", string? diagnosticText = null) : this(message)
         {
             Type = type ?? "";
             Url = url ?? "";
+            DiagnosticText = diagnosticText;
+            LinkText = linkText ?? "";
             if (Type == "exception")
             {
-                Buttons.Add(new("Copy", () => {
-                    Clipboard.SetText(Message);
-                }, Icons.Material.Filled.CopyAll));
+                Buttons.Add(new MonitorMessageButton("Copy diagnostics", CopyDiagnostics, Icons.Material.Filled.CopyAll)
+                {
+                    Color = MudBlazor.Color.Info,
+                });
                 Buttons.Add(new("Report", () => {
                     var psi = new ProcessStartInfo
                     {
@@ -60,6 +145,19 @@ namespace TarkovMonitor
                     };
                     Process.Start(psi);
                 }, Icons.Material.Filled.BugReport));
+            }
+        }
+
+        private MonitorMessageActionResult CopyDiagnostics()
+        {
+            try
+            {
+                Clipboard.SetText(DiagnosticText ?? Message);
+                return new(true, "Sanitized diagnostics copied to the clipboard.");
+            }
+            catch
+            {
+                return new(false, "Diagnostics could not be copied to the clipboard. Try again.");
             }
         }
 
@@ -73,16 +171,32 @@ namespace TarkovMonitor
         }
     }
 
+    public sealed class MonitorMessageProtectedValue
+    {
+        public string Label { get; }
+        public string Value { get; }
+
+        public MonitorMessageProtectedValue(string label, string value)
+        {
+            Label = label;
+            Value = value;
+        }
+    }
+
     public class MonitorMessageButton
     {
         public string Text { get; set; }
         public string Icon { get; set; } = "";
         public MudBlazor.Color Color { get; set; } = MudBlazor.Color.Default;
         public Action? OnClick { get; set; }
+        public Func<MonitorMessageActionResult>? ResultAction { get; set; }
         public bool Disabled { get; set; } = false;
         public MonitorMessageButtonConfirm? Confirm { get; set; }
         private System.Timers.Timer? buttonTimer;
         private double? timeout = null;
+        private DateTimeOffset? expiresAtUtc;
+        private int expirationRaised;
+        public bool IsExpired => expiresAtUtc.HasValue && DateTimeOffset.UtcNow >= expiresAtUtc.Value;
         public double? Timeout {
             get
             {
@@ -91,6 +205,10 @@ namespace TarkovMonitor
             set
             {
                 timeout = value;
+                expiresAtUtc = value is > 0
+                    ? DateTimeOffset.UtcNow.AddMilliseconds(value.Value)
+                    : null;
+                Interlocked.Exchange(ref expirationRaised, 0);
                 if (buttonTimer != null)
                 {
                     buttonTimer.Stop();
@@ -103,12 +221,12 @@ namespace TarkovMonitor
                 else
                 {
                     buttonTimer = new(timeout ?? 0) {
-                        AutoReset = true,
+                        AutoReset = false,
                         Enabled = true,
                     };
                     buttonTimer.Elapsed += (object? sender, ElapsedEventArgs e) =>
                     {
-                        Expired?.Invoke(this, e);
+                        RaiseExpired(e);
                     };
 
                 }
@@ -121,11 +239,27 @@ namespace TarkovMonitor
             Icon = icon;
             OnClick = onClick;
         }
+
+        public MonitorMessageButton(string text, Func<MonitorMessageActionResult> resultAction, string icon = "")
+        {
+            Text = text;
+            Icon = icon;
+            ResultAction = resultAction;
+        }
         public MonitorMessageButton(string text, string icon = "") : this(text, null, icon) { }
         public void Expire()
         {
             buttonTimer?.Stop();
-            Expired?.Invoke(this, new());
+            expiresAtUtc = DateTimeOffset.UtcNow;
+            RaiseExpired(EventArgs.Empty);
+        }
+
+        private void RaiseExpired(EventArgs args)
+        {
+            if (Interlocked.Exchange(ref expirationRaised, 1) == 0)
+            {
+                Expired?.Invoke(this, args);
+            }
         }
     }
 
